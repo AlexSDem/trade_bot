@@ -1,6 +1,8 @@
 config.yaml
 .env
 logs/
+logs/*.log
+logs/*.txt
 *.log
 __pycache__/
 *.pyc
