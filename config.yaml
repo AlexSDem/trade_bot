@@ -1,0 +1,28 @@
+broker:
+  use_sandbox: true            # сначала true, потом переключишь на false
+  currency: "rub"
+  log_file: "logs/bot.log"
+
+universe:
+  tickers: ["SBER", "GAZP", "LKOH", "GMKN", "TATN", "NVTK", "ROSN", "ALRS"]  # можно менять
+  exchange: "MOEX"             # фильтр по площадке (если вернёт API)
+
+schedule:
+  tz: "Europe/Moscow"
+  start_trade: "10:20"         # старт после открытия
+  stop_new_entries: "18:05"    # после этого не открываем новые позиции
+  flatten_time: "18:40"        # закрыть позицию и отменить заявки
+
+strategy:
+  lookback_minutes: 180
+  k_atr: 1.2
+  take_profit_pct: 0.004
+  stop_loss_pct: 0.006
+  time_stop_minutes: 45
+
+risk:
+  max_lot_cost_rub: 3500       # важнейшее под 10k: цена 1 лота не дороже этого
+  max_day_loss_rub: 100        # ~1% от 10k
+  max_trades_per_day: 3
+  max_positions: 1
+  max_active_orders_per_figi: 1
