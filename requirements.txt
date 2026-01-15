@@ -1,4 +1,4 @@
-tinkoff-investments
-pandas
-numpy
-pyyaml
+tinkoff-investments==0.2.0
+pandas==2.2.2
+numpy==2.0.1
+pyyaml==6.0.2
