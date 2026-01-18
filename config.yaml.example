@@ -4,6 +4,7 @@ broker:
   log_file: "logs/bot.log"
   class_code: "TQBR"
   trades_csv: "logs/trades.csv"
+  telegram_enabled: true
 
   retry_tries: 3
   retry_sleep_min: 1.0
