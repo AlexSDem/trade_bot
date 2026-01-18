@@ -1,26 +1,23 @@
 broker:
-  use_sandbox: true            # сначала true, потом переключишь на false
+  use_sandbox: true
   currency: "rub"
   log_file: "logs/bot.log"
-  class_code: "TQBR
+  class_code: "TQBR"
 
-  # Надёжность API:
   retry_tries: 3
   retry_sleep_min: 1.0
   retry_sleep_max: 10.0
 
-  # Только для sandbox: сколько "виртуальных рублей" закинуть на счёт при создании
   sandbox_pay_in_rub: 100000.0
 
 universe:
-  tickers: ["SBER", "GAZP", "LKOH", "GMKN", "TATN", "NVTK", "ROSN", "ALRS"]  # можно менять
-  exchange: "MOEX"             # сейчас не используется, оставлено на будущее
+  tickers: ["SBER", "GAZP", "LKOH", "GMKN", "TATN", "NVTK", "ROSN", "ALRS"]
 
 schedule:
   tz: "Europe/Moscow"
-  start_trade: "10:20"         # старт после открытия
-  stop_new_entries: "18:05"    # после этого не открываем новые позиции
-  flatten_time: "18:40"        # закрыть позицию и отменить заявки
+  start_trade: "10:20"
+  stop_new_entries: "18:05"
+  flatten_time: "18:40"
 
 strategy:
   lookback_minutes: 180
@@ -30,12 +27,12 @@ strategy:
   time_stop_minutes: 45
 
 risk:
-  max_lot_cost_rub: 3500       # важнейшее под 10k: цена 1 лота не дороже этого
-  max_day_loss_rub: 100        # ~1% от 10k
+  max_lot_cost_rub: 3500
+  max_day_loss_rub: 100
   max_trades_per_day: 3
   max_positions: 1
   max_active_orders_per_figi: 1
 
 runtime:
-  sleep_sec: 55                # пауза между итерациями цикла (пулл раз в минуту)
-  error_sleep_sec: 10          # пауза после ошибок
+  sleep_sec: 55
+  error_sleep_sec: 10
