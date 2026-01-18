@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from typing import List, Optional, Dict
+from decimal import Decimal
 
 import pandas as pd
 
@@ -178,14 +179,8 @@ class Broker:
 
     @staticmethod
     def _money_value(amount: float, currency: str):
-        """
-        MoneyValue expects units + nano; easiest via decimal_to_quotation then map.
-        """
-        q = decimal_to_quotation(amount)
-        # MoneyValue class is in tinkoff.invest, but constructing it directly
-        # can be version-dependent. sandbox_pay_in accepts MoneyValue.
-        # In recent SDK versions MoneyValue is available as tinkoff.invest.MoneyValue.
-        # To stay robust, we import lazily.
+        # Важно: decimal_to_quotation ждёт Decimal
+        q = decimal_to_quotation(Decimal(str(amount)))
         from tinkoff.invest import MoneyValue  # type: ignore
         return MoneyValue(units=q.units, nano=q.nano, currency=currency)
 
