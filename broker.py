@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from typing import List, Optional, Dict
 from decimal import Decimal
+from journal import TradeJournal
 
 import pandas as pd
 
