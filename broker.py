@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from decimal import Decimal
 from typing import List, Optional, Dict
+from telegram_notifier import notifier_from_env
 
 import pandas as pd
 
