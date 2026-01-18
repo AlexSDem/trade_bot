@@ -17,16 +17,21 @@ class Strategy:
         low = df["low"].values
         close = df["close"].values
         prev_close = np.r_[close[0], close[:-1]]
-        tr = np.maximum(high - low, np.maximum(np.abs(high - prev_close), np.abs(low - prev_close)))
+        tr = np.maximum(
+            high - low,
+            np.maximum(np.abs(high - prev_close), np.abs(low - prev_close)),
+        )
         if len(tr) < n + 1:
-            return float(np.nan)
+            return float("nan")
         return float(pd.Series(tr).rolling(n).mean().iloc[-1])
 
     @staticmethod
     def _vwap(df: pd.DataFrame) -> float:
         pv = (df["close"] * df["volume"]).sum()
         vv = df["volume"].sum()
-        return float(pv / vv) if vv > 0 else float(df["close"].iloc[-1])
+        if vv <= 0:
+            return float(df["close"].iloc[-1])
+        return float(pv / vv)
 
     def make_signal(self, figi: str, candles: pd.DataFrame, state) -> dict:
         """
@@ -35,45 +40,61 @@ class Strategy:
         """
         df = candles.tail(self.lookback).copy()
         last = float(df["close"].iloc[-1])
-        vwap = self._vwap(df)
-        atr = self._atr(df, 14)
 
+        atr = self._atr(df, 14)
         if not np.isfinite(atr) or atr <= 0:
             return {"action": "HOLD", "price": last, "reason": "ATR not ready"}
 
+        vwap = self._vwap(df)
         fs = state.get(figi)
         has_pos = fs.position_lots > 0
 
-        # --- Если есть позиция: генерируем выход (SELL) ---
+        # =========================
+        # EXIT LOGIC (SELL)
+        # =========================
         if has_pos:
-            # если только что позиция появилась, но entry_price ещё не записан
             if fs.entry_price is None:
                 fs.entry_price = last
                 fs.entry_time = df["time"].iloc[-1]
 
             entry = float(fs.entry_price)
-            # тейк: либо возврат к VWAP, либо +take_pct
             take_level = max(entry * (1 + self.take_pct), vwap)
             stop_level = entry * (1 - self.stop_pct)
 
-            # тайм-стоп
             if fs.entry_time is not None:
                 age = df["time"].iloc[-1] - fs.entry_time
                 if age >= timedelta(minutes=self.time_stop_minutes):
-                    return {"action": "SELL", "price": last, "reason": f"time_stop {age}"}
+                    return {
+                        "action": "SELL",
+                        "price": last,
+                        "reason": f"time_stop {age}",
+                    }
 
             if last >= take_level:
-                return {"action": "SELL", "price": last, "reason": f"take last>={take_level:.4f} (vwap={vwap:.4f})"}
+                return {
+                    "action": "SELL",
+                    "price": last,
+                    "reason": f"take_profit last>={take_level:.4f}",
+                }
 
             if last <= stop_level:
-                return {"action": "SELL", "price": last, "reason": f"stop last<={stop_level:.4f}"}
+                return {
+                    "action": "SELL",
+                    "price": last,
+                    "reason": f"stop_loss last<={stop_level:.4f}",
+                }
 
             return {"action": "HOLD", "price": last, "reason": "in_position"}
 
-        # --- Если позиции нет: ищем вход (BUY) ---
+        # =========================
+        # ENTRY LOGIC (BUY)
+        # =========================
         buy_level = vwap - self.k * atr
         if last < buy_level:
-            # лимитка по last (broker округлит по шагу цены)
-            return {"action": "BUY", "price": last, "reason": f"mean_rev last<{buy_level:.4f} VWAP={vwap:.4f} ATR={atr:.4f}"}
+            return {
+                "action": "BUY",
+                "price": last,
+                "reason": f"mean_reversion last<{buy_level:.4f}",
+            }
 
-        return {"actio
+        return {"action": "HOLD", "price": last, "reason": "no_edge"}
