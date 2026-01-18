@@ -319,55 +319,55 @@ class Broker:
 
     # ---------- orders / positions ----------
     def sync_state(self, account_id: str, figi: str):
-    """
-    Updates:
-      - open position lots for figi
-      - active order id for figi
-      - entry_price / entry_time bookkeeping (MVP)
-    """
-    self._ensure_day_rollover()
-    fs = self.state.get(figi)  # <-- используем BotState.get()
-
-    # --- positions ---
-    prev_lots = fs.position_lots  # запоминаем, что было до синка
-    new_lots = prev_lots
-
-    try:
-        pos = self._call(self.client.operations.get_positions, account_id=account_id)
-        lots = 0
-        for sec in pos.securities:
-            if sec.figi == figi:
-                lots = int(quotation_to_decimal(sec.balance))
-                break
-        new_lots = lots
-        fs.position_lots = new_lots
-    except Exception as e:
-        self.log(f"[WARN] get_positions failed: {e}")
-
-    # --- active orders ---
-    try:
-        orders = self._call(self.client.orders.get_orders, account_id=account_id).orders
-        active = [o for o in orders if o.figi == figi]
-        fs.active_order_id = active[0].order_id if active else None
-    except Exception as e:
-        self.log(f"[WARN] get_orders failed: {e}")
-
-    # --- entry bookkeeping (MVP) ---
-    # 1) позиция закрылась: >0 -> 0  => сбрасываем entry данные
-    if prev_lots > 0 and new_lots == 0:
-        fs.entry_price = None
-        fs.entry_time = None
-
-    # 2) позиция открылась: 0 -> >0 => фиксируем примерный entry, если не задан
-    if prev_lots == 0 and new_lots > 0:
-        if fs.entry_time is None:
-            fs.entry_time = now()
-        if fs.entry_price is None:
-            # Для MVP берём последнюю цену как приближение.
-            # Если last_price не доступен — оставим None, стратегия подхватит позже.
-            last = self.get_last_price(figi)
-            if last is not None:
-                fs.entry_price = float(last)
+        """
+        Updates:
+          - open position lots for figi
+          - active order id for figi
+          - entry_price / entry_time bookkeeping (MVP)
+        """
+        self._ensure_day_rollover()
+        fs = self.state.get(figi)  # <-- используем BotState.get()
+    
+        # --- positions ---
+        prev_lots = fs.position_lots  # запоминаем, что было до синка
+        new_lots = prev_lots
+    
+        try:
+            pos = self._call(self.client.operations.get_positions, account_id=account_id)
+            lots = 0
+            for sec in pos.securities:
+                if sec.figi == figi:
+                    lots = int(quotation_to_decimal(sec.balance))
+                    break
+            new_lots = lots
+            fs.position_lots = new_lots
+        except Exception as e:
+            self.log(f"[WARN] get_positions failed: {e}")
+    
+        # --- active orders ---
+        try:
+            orders = self._call(self.client.orders.get_orders, account_id=account_id).orders
+            active = [o for o in orders if o.figi == figi]
+            fs.active_order_id = active[0].order_id if active else None
+        except Exception as e:
+            self.log(f"[WARN] get_orders failed: {e}")
+    
+        # --- entry bookkeeping (MVP) ---
+        # 1) позиция закрылась: >0 -> 0  => сбрасываем entry данные
+        if prev_lots > 0 and new_lots == 0:
+            fs.entry_price = None
+            fs.entry_time = None
+    
+        # 2) позиция открылась: 0 -> >0 => фиксируем примерный entry, если не задан
+        if prev_lots == 0 and new_lots > 0:
+            if fs.entry_time is None:
+                fs.entry_time = now()
+            if fs.entry_price is None:
+                # Для MVP берём последнюю цену как приближение.
+                # Если last_price не доступен — оставим None, стратегия подхватит позже.
+                last = self.get_last_price(figi)
+                if last is not None:
+                    fs.entry_price = float(last)
 
     def has_open_position(self, figi: str) -> bool:
         fs = self.state.figi.get(figi)
@@ -485,41 +485,41 @@ class Broker:
                 self.place_limit_sell_to_close(account_id, figi, price=last)
 
         def calc_day_cashflow(self, account_id: str) -> float:
-        """
-        MVP защитная метрика дня:
-        суммарный денежный поток (cashflow) за сегодня в выбранной валюте.
-
-        Используется ТОЛЬКО как дневной предохранитель,
-        это не точный PnL.
-        """
-        try:
-            tz = ZoneInfo("Europe/Moscow")
-            today_local = datetime.now(tz=tz).date()
-
-            from_local = datetime.combine(
-                today_local, datetime.min.time(), tzinfo=tz
-            )
-            to_local = datetime.combine(
-                today_local, datetime.max.time(), tzinfo=tz
-            )
-
-            from_utc = from_local.astimezone(ZoneInfo("UTC"))
-            to_utc = to_local.astimezone(ZoneInfo("UTC"))
-
-            ops = self._call(
-                self.client.operations.get_operations,
-                account_id=account_id,
-                from_=from_utc,
-                to=to_utc,
-            )
-
-            total = 0.0
-            for op in ops.operations:
-                if op.payment.currency == self.currency:
-                    total += float(quotation_to_decimal(op.payment))
-
-            return total
-
-        except Exception as e:
-            self.log(f"[WARN] calc_day_cashflow failed: {e}")
-            return 0.0
+            """
+            MVP защитная метрика дня:
+            суммарный денежный поток (cashflow) за сегодня в выбранной валюте.
+    
+            Используется ТОЛЬКО как дневной предохранитель,
+            это не точный PnL.
+            """
+            try:
+                tz = ZoneInfo("Europe/Moscow")
+                today_local = datetime.now(tz=tz).date()
+    
+                from_local = datetime.combine(
+                    today_local, datetime.min.time(), tzinfo=tz
+                )
+                to_local = datetime.combine(
+                    today_local, datetime.max.time(), tzinfo=tz
+                )
+    
+                from_utc = from_local.astimezone(ZoneInfo("UTC"))
+                to_utc = to_local.astimezone(ZoneInfo("UTC"))
+    
+                ops = self._call(
+                    self.client.operations.get_operations,
+                    account_id=account_id,
+                    from_=from_utc,
+                    to=to_utc,
+                )
+    
+                total = 0.0
+                for op in ops.operations:
+                    if op.payment.currency == self.currency:
+                        total += float(quotation_to_decimal(op.payment))
+    
+                return total
+    
+            except Exception as e:
+                self.log(f"[WARN] calc_day_cashflow failed: {e}")
+                return 0.0
