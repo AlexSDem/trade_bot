@@ -187,48 +187,34 @@ class Broker:
     # ---------- instruments ----------
     def resolve_instruments(self, tickers: List[str]) -> Dict[str, InstrumentInfo]:
         """
-        Returns ticker -> InstrumentInfo.
-        Caches figi -> InstrumentInfo in self._figi_info.
+        Надёжное разрешение тикеров в акции MOEX (класс TQBR).
+        Не используем find_instrument для выбора FIGI (он часто даёт фьючерсы/не тот класс).
         """
         out: Dict[str, InstrumentInfo] = {}
-
+        class_code = self.cfg.get("class_code", "TQBR")  # можно положить в config
+    
         for t in tickers:
             try:
-                r = self._call(self.client.instruments.find_instrument, query=t)
-            except Exception as e:
-                self.log(f"[WARN] find_instrument failed for {t}: {e}")
-                continue
-
-            # pick share if possible
-            candidate = None
-            for inst in r.instruments:
-                if getattr(inst, "instrument_type", "").upper() == "INSTRUMENT_TYPE_SHARE":
-                    candidate = inst
-                    break
-            if candidate is None and r.instruments:
-                candidate = r.instruments[0]
-
-            if candidate is None:
-                continue
-
-            figi = candidate.figi
-            try:
-                share = self._call(
+                # ВАЖНО: берём именно акцию по тикеру + class_code
+                r = self._call(
                     self.client.instruments.share_by,
-                    id=figi,
-                    id_type=InstrumentIdType.INSTRUMENT_ID_TYPE_FIGI,
-                ).instrument
+                    id=t,
+                    id_type=InstrumentIdType.INSTRUMENT_ID_TYPE_TICKER,
+                    class_code=class_code,
+                )
+                share = r.instrument
             except Exception as e:
-                self.log(f"[WARN] share_by failed for {t} ({figi}): {e}")
+                self.log(f"[WARN] share_by(TICKER) failed for {t} class={class_code}: {e}")
                 continue
-
+    
+            figi = share.figi
             lot = int(share.lot)
             mpi = float(quotation_to_decimal(share.min_price_increment))
-
+    
             info = InstrumentInfo(ticker=t, figi=figi, lot=lot, min_price_increment=mpi)
             out[t] = info
             self._figi_info[figi] = info
-
+    
         return out
 
     def pick_tradeable_figis(self, universe_cfg: dict, max_lot_cost: float) -> List[str]:
