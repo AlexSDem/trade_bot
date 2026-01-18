@@ -55,6 +55,7 @@ class Broker:
         self.client = client
         self.cfg = cfg
         self.state = BotState()
+        self.tg = notifier_from_env(enabled=bool(cfg.get("telegram_enabled", False)))
 
         os.makedirs("logs", exist_ok=True)
         self.logger = logging.getLogger("bot")
