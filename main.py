@@ -34,7 +34,6 @@ def main():
     strategy = Strategy(cfg["strategy"])
     risk = RiskManager(cfg["risk"])
 
-    # Пауза между итерациями цикла
     sleep_sec = float(cfg.get("runtime", {}).get("sleep_sec", 55))
     error_sleep_sec = float(cfg.get("runtime", {}).get("error_sleep_sec", 10))
 
@@ -46,19 +45,21 @@ def main():
 
         figis = broker.pick_tradeable_figis(cfg["universe"], max_lot_cost=cfg["risk"]["max_lot_cost_rub"])
         broker.log(f"[INFO] Tradeable FIGIs: {figis}")
-        last_heartbeat = 0.0
 
         if not figis:
             broker.log("[ERROR] Нет подходящих инструментов под max_lot_cost_rub. Увеличь лимит или измени tickers.")
             return
 
+        last_hb = 0.0
+
         while True:
             try:
                 ts = now()
-                # heartbeat раз в минуту
-                if time.time() - last_heartbeat >= 60:
-                    broker.log(f"[HB] alive | utc={ts.isoformat()} | entries_allowed={broker.new_entries_allowed(ts, cfg['schedule'])}")
-                    last_heartbeat = time.time()
+
+                # Heartbeat раз в минуту, чтобы видеть что бот жив
+                if time.time() - last_hb >= 60:
+                    broker.log(f"[HB] alive | utc={ts.isoformat()}")
+                    last_hb = time.time()
 
                 # Вне торгового окна — только закрываемся при необходимости
                 if not broker.is_trading_time(ts, cfg["schedule"]):
@@ -72,7 +73,7 @@ def main():
                     time.sleep(min(10, sleep_sec))
                     continue
 
-                # Дневной лок — не торгуем, но продолжаем жить
+                # Дневной лок
                 if risk.day_locked():
                     time.sleep(30)
                     continue
@@ -80,25 +81,36 @@ def main():
                 entries_allowed = broker.new_entries_allowed(ts, cfg["schedule"])
 
                 for figi in figis:
-                    # 1) синхронизируем состояние (позиции/заявки + entry bookkeeping)
+                    # 1) синхронизируем состояние
                     broker.sync_state(account_id, figi)
 
-                    # 2) берём свечи
+                    # 2) проверяем изменения статуса активной заявки (исполнение/отмена/отклонение)
+                    broker.poll_order_updates(account_id, figi)
+
+                    # 3) свечи
                     candles = broker.get_last_candles_1m(figi, lookback_minutes=cfg["strategy"]["lookback_minutes"])
                     if candles is None or len(candles) < 30:
                         continue
 
-                    # 3) получаем сигнал (учитывает state для тейка/стопа/тайм-стопа)
+                    # 4) сигнал
                     signal = strategy.make_signal(figi, candles, broker.state)
                     action = signal.get("action", "HOLD")
 
-                    # 4) исполняем
+                    # пишем сигнал в CSV (для анализа)
+                    if action in ("BUY", "SELL"):
+                        broker.journal_event(
+                            "SIGNAL",
+                            figi,
+                            side=action,
+                            lots=1,
+                            price=signal.get("price"),
+                            reason=signal.get("reason", ""),
+                        )
+
+                    # 5) исполнение
                     if action == "BUY":
-                        # после stop_new_entries новые входы запрещены
                         if not entries_allowed:
                             continue
-
-                        # риск-фильтры только на вход
                         if not risk.allow_new_trade(broker.state, account_id, figi):
                             continue
 
@@ -107,12 +119,11 @@ def main():
                             broker.log(f"[SIGNAL] BUY {figi} @ {signal['price']} | {signal.get('reason', '')}")
 
                     elif action == "SELL":
-                        # выход разрешён всегда (если есть позиция)
                         ok = broker.place_limit_sell_to_close(account_id, figi, signal["price"])
                         if ok:
                             broker.log(f"[SIGNAL] SELL {figi} @ {signal['price']} | {signal.get('reason', '')}")
 
-                # 5) дневной "предохранитель" — cashflow как защитная метрика
+                # дневной предохранитель
                 day_metric = broker.calc_day_cashflow(account_id)
                 risk.update_day_pnl(day_metric)
 
@@ -127,7 +138,6 @@ def main():
                 break
 
             except Exception as e:
-                # Не падаем на временных ошибках
                 try:
                     broker.log(f"[ERROR] Main loop error: {e}")
                 except Exception:
