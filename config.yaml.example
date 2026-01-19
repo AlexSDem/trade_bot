@@ -37,6 +37,7 @@ risk:
 
 runtime:
   sleep_sec: 55
+  heartbeat_sec: 300
   error_sleep_sec: 10
   max_consecutive_errors: 8
 

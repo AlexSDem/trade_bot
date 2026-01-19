@@ -82,6 +82,9 @@ class Broker:
         # cache figi -> InstrumentInfo
         self._figi_info: Dict[str, InstrumentInfo] = {}
 
+        # last known cash from snapshot (to avoid extra API calls)
+        self.last_cash_rub: float = 0.0
+
         # CSV journal
         self.journal = TradeJournal(cfg.get("trades_csv", "logs/trades.csv"))
 
@@ -111,6 +114,17 @@ class Broker:
         # Positions (1 call)
         try:
             pos = self._call(self._positions_call(), account_id=account_id)
+
+            # Cache available cash from the same response
+            cash = 0.0
+            for m in getattr(pos, "money", []) or []:
+                try:
+                    if getattr(m, "currency", None) == self.currency:
+                        cash += float(self._to_float(m))
+                except Exception:
+                    pass
+            self.last_cash_rub = float(cash)
+
             by_figi_lots: Dict[str, int] = {f: 0 for f in figi_set}
             for sec in getattr(pos, "securities", []):
                 f = getattr(sec, "figi", "")
@@ -183,6 +197,23 @@ class Broker:
     def _ticker_for_figi(self, figi: str) -> str:
         info = self._figi_info.get(figi)
         return info.ticker if info else ""
+
+    # Public helpers for prettier logs
+    def ticker_for_figi(self, figi: str) -> str:
+        return self._ticker_for_figi(figi)
+
+    def format_instrument(self, figi: str) -> str:
+        """Human-friendly instrument label for logs/TG."""
+        t = self._ticker_for_figi(figi)
+        return f"{t} ({figi})" if t else figi
+
+    def get_cached_cash_rub(self, account_id: str | None = None) -> float:
+        """Returns last cash from snapshot; if unknown and account_id provided, falls back to API."""
+        if self.last_cash_rub > 0:
+            return float(self.last_cash_rub)
+        if account_id:
+            return float(self.get_cash_rub(account_id))
+        return 0.0
 
     def journal_event(self, event: str, figi: str, **kwargs):
         self.journal.write(event=event, figi=figi, ticker=self._ticker_for_figi(figi), **kwargs)
@@ -578,8 +609,15 @@ class Broker:
 
             fs.client_order_uid = client_uid
             fs.active_order_id = r.order_id
-            self.log(f"[ORDER] BUY {figi} qty={int(quantity_lots)} price={price_f} (client_uid={client_uid})")
-            self.notify(f"[ORDER] BUY {self._ticker_for_figi(figi) or figi} qty={int(quantity_lots)} price={price_f}", throttle_sec=0)
+            inst = self.format_instrument(figi)
+            cash = self.get_cached_cash_rub(account_id)
+            self.log(
+                f"[ORDER] BUY {inst} qty={int(quantity_lots)} price={price_f} | cash≈{cash:.2f} {self.currency.upper()} (client_uid={client_uid})"
+            )
+            self.notify(
+                f"[ORDER] BUY {inst} qty={int(quantity_lots)} price={price_f} | cash≈{cash:.2f} {self.currency.upper()}",
+                throttle_sec=0,
+            )
 
             self.journal_event(
                 "SUBMIT",
@@ -626,8 +664,15 @@ class Broker:
             fs.client_order_uid = client_uid
             fs.active_order_id = r.order_id
 
-            self.log(f"[ORDER] SELL {figi} qty={int(fs.position_lots)} price={price_f} (client_uid={client_uid})")
-            self.notify(f"[ORDER] SELL {self._ticker_for_figi(figi) or figi} qty={int(fs.position_lots)} price={price_f}", throttle_sec=0)
+            inst = self.format_instrument(figi)
+            cash = self.get_cached_cash_rub(account_id)
+            self.log(
+                f"[ORDER] SELL {inst} qty={int(fs.position_lots)} price={price_f} | cash≈{cash:.2f} {self.currency.upper()} (client_uid={client_uid})"
+            )
+            self.notify(
+                f"[ORDER] SELL {inst} qty={int(fs.position_lots)} price={price_f} | cash≈{cash:.2f} {self.currency.upper()}",
+                throttle_sec=0,
+            )
 
             self.journal_event(
                 "SUBMIT",
