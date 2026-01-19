@@ -8,7 +8,6 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from decimal import Decimal
 from typing import List, Optional, Dict
-from telegram_notifier import notifier_from_env
 
 import pandas as pd
 
@@ -37,31 +36,25 @@ class InstrumentInfo:
 
 class Broker:
     """
-    Broker wrapper for T-Invest Invest API.
-
-    Features:
-      - supports sandbox / real mode (cfg['use_sandbox'])
-      - resolves tickers via share_by(TICKER, class_code='TQBR') -> avoids futures
-      - instrument cache (figi -> InstrumentInfo)
-      - price rounding to min_price_increment
-      - idempotent orders (client order_id UUID)
-      - safe state sync (positions + active orders + entry bookkeeping)
-      - end-of-day flatten (cancel + close position)
-      - CSV journal (signals/orders/fills/cancels)
-      - order execution polling via get_order_state
+    T-Invest broker wrapper with:
+      - sandbox/real routing for account-bound methods (positions/orders/operations)
+      - robust ticker -> share resolution via share_by(TICKER, class_code)
+      - candle polling (1m)
+      - idempotent limit orders (client uid)
+      - CSV trade journal (signals/orders/fills/cancels/rejects)
+      - order execution polling via get_order_state (sandbox/real)
     """
 
     def __init__(self, client: Client, cfg: dict):
         self.client = client
         self.cfg = cfg
         self.state = BotState()
-        self.tg = notifier_from_env(enabled=bool(cfg.get("telegram_enabled", False)))
 
         os.makedirs("logs", exist_ok=True)
+
         self.logger = logging.getLogger("bot")
         self.logger.setLevel(logging.INFO)
         self.logger.handlers.clear()
-
         log_path = cfg.get("log_file", "logs/bot.log")
         fh = logging.FileHandler(log_path, encoding="utf-8")
         fh.setLevel(logging.INFO)
@@ -73,12 +66,13 @@ class Broker:
         self.use_sandbox = bool(cfg.get("use_sandbox", True))
         self.class_code = cfg.get("class_code", "TQBR")
 
-        # cache: figi -> InstrumentInfo
-        self._figi_info: Dict[str, InstrumentInfo] = {}
-
-        # backoff settings
+        # retry/backoff
+        self._retry_tries = int(cfg.get("retry_tries", 3))
         self._retry_sleep_min = float(cfg.get("retry_sleep_min", 1.0))
         self._retry_sleep_max = float(cfg.get("retry_sleep_max", 10.0))
+
+        # cache figi -> InstrumentInfo
+        self._figi_info: Dict[str, InstrumentInfo] = {}
 
         # CSV journal
         self.journal = TradeJournal(cfg.get("trades_csv", "logs/trades.csv"))
@@ -96,7 +90,7 @@ class Broker:
     def journal_event(self, event: str, figi: str, **kwargs):
         self.journal.write(event=event, figi=figi, ticker=self._ticker_for_figi(figi), **kwargs)
 
-    # ---------- time/day helpers ----------
+    # ---------- day helpers ----------
     def _today_key(self) -> str:
         return datetime.now(tz=ZoneInfo("UTC")).date().isoformat()
 
@@ -105,17 +99,15 @@ class Broker:
         if self.state.current_day != today:
             self.state.reset_day(today)
 
-    # ---------- backoff wrapper ----------
+    # ---------- retry wrapper ----------
     def _call(self, fn, *args, **kwargs):
-        tries = int(self.cfg.get("retry_tries", 3))
         sleep = self._retry_sleep_min
-
-        for attempt in range(1, tries + 1):
+        for attempt in range(1, self._retry_tries + 1):
             try:
                 return fn(*args, **kwargs)
             except RequestError as e:
-                self.log(f"[WARN] API error (attempt {attempt}/{tries}): {e}")
-                if attempt == tries:
+                self.log(f"[WARN] API error (attempt {attempt}/{self._retry_tries}): {e}")
+                if attempt == self._retry_tries:
                     raise
                 time.sleep(sleep)
                 sleep = min(self._retry_sleep_max, sleep * 2)
@@ -145,8 +137,15 @@ class Broker:
         hh, mm = s.split(":")
         return datetime.strptime(f"{hh}:{mm}", "%H:%M").time()
 
-    # ---------- sandbox / accounts ----------
+    # ---------- accounts / sandbox ----------
     def pick_account_id(self) -> str:
+        """
+        In sandbox:
+          - if no accounts -> open
+          - optional pay-in (sandbox_pay_in_rub)
+        In real:
+          - pick first account from users.get_accounts()
+        """
         if self.use_sandbox:
             accs = self._call(self.client.sandbox.get_sandbox_accounts).accounts
             if not accs:
@@ -168,6 +167,7 @@ class Broker:
                         self.log(f"[WARN] Sandbox pay-in failed: {e}")
 
                 return account_id
+
             return accs[0].id
 
         resp = self._call(self.client.users.get_accounts)
@@ -184,8 +184,7 @@ class Broker:
     # ---------- instruments ----------
     def resolve_instruments(self, tickers: List[str]) -> Dict[str, InstrumentInfo]:
         """
-        Надёжное разрешение тикеров в акции MOEX (TQBR по умолчанию),
-        чтобы не попадать на FUT/derivatives из find_instrument.
+        Resolve MOEX shares via share_by(TICKER, class_code) to avoid futures/derivatives.
         """
         out: Dict[str, InstrumentInfo] = {}
         for t in tickers:
@@ -285,47 +284,65 @@ class Broker:
             self.log(f"[WARN] candles error {figi}: {e}")
             return None
 
-    # ---------- orders / positions ----------
+    # ---------- routing helpers (sandbox vs real) ----------
+    def _positions_call(self):
+        return self.client.sandbox.get_sandbox_positions if self.use_sandbox else self.client.operations.get_positions
+
+    def _orders_list_call(self):
+        return self.client.sandbox.get_sandbox_orders if self.use_sandbox else self.client.orders.get_orders
+
+    def _order_post_call(self):
+        return self.client.sandbox.post_sandbox_order if self.use_sandbox else self.client.orders.post_order
+
+    def _order_cancel_call(self):
+        return self.client.sandbox.cancel_sandbox_order if self.use_sandbox else self.client.orders.cancel_order
+
+    def _order_state_call(self):
+        return self.client.sandbox.get_sandbox_order_state if self.use_sandbox else self.client.orders.get_order_state
+
+    def _operations_call(self):
+        return self.client.sandbox.get_sandbox_operations if self.use_sandbox else self.client.operations.get_operations
+
+    # ---------- state sync ----------
     def sync_state(self, account_id: str, figi: str):
         """
         Updates:
           - position lots for figi
           - active order id for figi
-          - entry bookkeeping (MVP)
+          - entry bookkeeping
         """
         self._ensure_day_rollover()
         fs = self.state.get(figi)
 
         prev_lots = fs.position_lots
-        new_lots = prev_lots
 
-        # positions
+        # Positions
         try:
-            pos = self._call(self.client.operations.get_positions, account_id=account_id)
+            pos = self._call(self._positions_call(), account_id=account_id)
             lots = 0
             for sec in pos.securities:
                 if sec.figi == figi:
+                    # balance is Quotation-like
                     lots = int(quotation_to_decimal(sec.balance))
                     break
-            new_lots = lots
-            fs.position_lots = new_lots
+            fs.position_lots = lots
         except Exception as e:
             self.log(f"[WARN] get_positions failed: {e}")
 
-        # active orders
+        # Orders
         try:
-            orders = self._call(self.client.orders.get_orders, account_id=account_id).orders
+            orders = self._call(self._orders_list_call(), account_id=account_id).orders
             active = [o for o in orders if o.figi == figi]
             fs.active_order_id = active[0].order_id if active else None
         except Exception as e:
             self.log(f"[WARN] get_orders failed: {e}")
 
-        # entry bookkeeping
-        if prev_lots > 0 and new_lots == 0:
+        # Entry bookkeeping
+        if prev_lots > 0 and fs.position_lots == 0:
             fs.entry_price = None
             fs.entry_time = None
 
-        if prev_lots == 0 and new_lots > 0:
+        if prev_lots == 0 and fs.position_lots > 0:
             if fs.entry_time is None:
                 fs.entry_time = now()
             if fs.entry_price is None:
@@ -333,13 +350,18 @@ class Broker:
                 if last is not None:
                     fs.entry_price = float(last)
 
+    # ---------- orders ----------
     def cancel_active_order(self, account_id: str, figi: str):
         fs = self.state.get(figi)
         if not fs.active_order_id:
             return
+
+        oid = fs.active_order_id
+        cuid = fs.client_order_uid or ""
+
         try:
-            self._call(self.client.orders.cancel_order, account_id=account_id, order_id=fs.active_order_id)
-            self.log(f"[CANCEL] {figi} order_id={fs.active_order_id}")
+            self._call(self._order_cancel_call(), account_id=account_id, order_id=oid)
+            self.log(f"[CANCEL] {figi} order_id={oid}")
 
             self.journal_event(
                 "CANCEL",
@@ -347,8 +369,8 @@ class Broker:
                 side="",
                 lots=None,
                 price=None,
-                order_id=fs.active_order_id or "",
-                client_uid=fs.client_order_uid or "",
+                order_id=oid,
+                client_uid=cuid,
                 status="CANCELLED",
                 reason="cancel_active_order",
             )
@@ -359,10 +381,8 @@ class Broker:
             self.log(f"[WARN] cancel_order failed: {e}")
 
     def place_limit_buy(self, account_id: str, figi: str, price: float, quantity_lots: int = 1) -> bool:
-        if self.state.trades_today < 0:  # safeguard (never true)
-            return False
-
         fs = self.state.get(figi)
+
         if fs.active_order_id:
             return False
         if fs.position_lots > 0:
@@ -374,7 +394,7 @@ class Broker:
 
         try:
             r = self._call(
-                self.client.orders.post_order,
+                self._order_post_call(),
                 account_id=account_id,
                 figi=figi,
                 quantity=quantity_lots,
@@ -421,7 +441,7 @@ class Broker:
 
         try:
             r = self._call(
-                self.client.orders.post_order,
+                self._order_post_call(),
                 account_id=account_id,
                 figi=figi,
                 quantity=fs.position_lots,
@@ -455,19 +475,15 @@ class Broker:
 
     # ---------- order execution polling ----------
     def poll_order_updates(self, account_id: str, figi: str):
-        """
-        Checks status of active order and writes fills/cancels/rejects into trades.csv.
-        """
         fs = self.state.get(figi)
         if not fs.active_order_id:
             return
 
+        oid = fs.active_order_id
+        cuid = fs.client_order_uid or ""
+
         try:
-            st = self._call(
-                self.client.orders.get_order_state,
-                account_id=account_id,
-                order_id=fs.active_order_id,
-            )
+            st = self._call(self._order_state_call(), account_id=account_id, order_id=oid)
         except Exception as e:
             self.log(f"[WARN] get_order_state failed {figi}: {e}")
             return
@@ -488,21 +504,19 @@ class Broker:
         side = "BUY" if "BUY" in direction else ("SELL" if "SELL" in direction else "")
 
         # partial fill
-        if lots_executed > 0 and lots_executed < lots_requested:
+        if lots_executed > 0 and 0 < lots_requested and lots_executed < lots_requested:
             self.journal_event(
                 "PARTIAL_FILL",
                 figi,
                 side=side,
                 lots=lots_executed,
                 price=avg_price,
-                order_id=fs.active_order_id,
-                client_uid=fs.client_order_uid or "",
+                order_id=oid,
+                client_uid=cuid,
                 status=status,
                 reason="partial_fill",
                 meta={"lots_requested": lots_requested},
             )
-            self.tg.send(f"✅ FILL {self._ticker_for_figi(figi)} {side} lots={lots_executed} price={avg_price}", throttle_sec=0)
-            self.tg.send(f"⛔ REJECT {self._ticker_for_figi(figi)} {side} status={status}", throttle_sec=1)
 
         final_statuses = {
             "EXECUTION_REPORT_STATUS_FILL",
@@ -518,13 +532,12 @@ class Broker:
                     side=side,
                     lots=lots_executed,
                     price=avg_price,
-                    order_id=fs.active_order_id,
-                    client_uid=fs.client_order_uid or "",
+                    order_id=oid,
+                    client_uid=cuid,
                     status=status,
                     reason="filled",
                 )
 
-                # entry bookkeeping
                 if side == "BUY":
                     if fs.entry_time is None:
                         fs.entry_time = now()
@@ -541,8 +554,8 @@ class Broker:
                     side=side,
                     lots=lots_executed,
                     price=avg_price,
-                    order_id=fs.active_order_id,
-                    client_uid=fs.client_order_uid or "",
+                    order_id=oid,
+                    client_uid=cuid,
                     status=status,
                     reason="cancelled_by_api",
                 )
@@ -554,17 +567,16 @@ class Broker:
                     side=side,
                     lots=lots_executed,
                     price=avg_price,
-                    order_id=fs.active_order_id,
-                    client_uid=fs.client_order_uid or "",
+                    order_id=oid,
+                    client_uid=cuid,
                     status=status,
                     reason="rejected",
                 )
 
-            # clear active order
             fs.active_order_id = None
             fs.client_order_uid = None
 
-    # ---------- flatten / pnl ----------
+    # ---------- flatten ----------
     def flatten_if_needed(self, account_id: str, schedule_cfg: dict):
         ts = now()
         if not self.flatten_due(ts, schedule_cfg):
@@ -582,10 +594,11 @@ class Broker:
                     continue
                 self.place_limit_sell_to_close(account_id, figi, price=last)
 
+    # ---------- day metric ----------
     def calc_day_cashflow(self, account_id: str) -> float:
         """
-        MVP protective day metric:
-        sum of operation payments for today in selected currency.
+        Protective day metric: sum of operation payments for today in selected currency.
+        Uses sandbox operations in sandbox mode.
         """
         try:
             tz = ZoneInfo("Europe/Moscow")
@@ -597,12 +610,7 @@ class Broker:
             from_utc = from_local.astimezone(ZoneInfo("UTC"))
             to_utc = to_local.astimezone(ZoneInfo("UTC"))
 
-            ops = self._call(
-                self.client.operations.get_operations,
-                account_id=account_id,
-                from_=from_utc,
-                to=to_utc,
-            )
+            ops = self._call(self._operations_call(), account_id=account_id, from_=from_utc, to=to_utc)
 
             total = 0.0
             for op in ops.operations:
@@ -610,7 +618,6 @@ class Broker:
                     total += float(quotation_to_decimal(op.payment))
 
             return total
-
         except Exception as e:
             self.log(f"[WARN] calc_day_cashflow failed: {e}")
             return 0.0
