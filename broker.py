@@ -49,10 +49,14 @@ class Broker:
       - Decimal is used ONLY when constructing Quotation/MoneyValue for API calls
     """
 
-    def __init__(self, client: Client, cfg: dict):
+    def __init__(self, client: Client, cfg: dict, notifier=None):
         self.client = client
         self.cfg = cfg
         self.state = BotState()
+        self.notifier = notifier
+
+        # internal throttles
+        self._last_low_cash_warn: Dict[str, float] = {}
 
         os.makedirs("logs", exist_ok=True)
 
@@ -85,6 +89,67 @@ class Broker:
     def log(self, msg: str):
         self.logger.info(msg)
         print(msg)
+
+    def notify(self, text: str, throttle_sec: float = 0.0):
+        """Best-effort Telegram notification (never raises)."""
+        if not self.notifier:
+            return
+        try:
+            self.notifier.send(text, throttle_sec=throttle_sec)
+        except Exception:
+            pass
+
+    # ---------- account-wide snapshot (positions + orders) ----------
+    def refresh_account_snapshot(self, account_id: str, figis: List[str]):
+        """
+        Pulls positions + orders once and updates state for the provided figis.
+        This greatly reduces API calls vs calling sync_state() per figi.
+        """
+        self._ensure_day_rollover()
+        figi_set = set(figis)
+
+        # Positions (1 call)
+        try:
+            pos = self._call(self._positions_call(), account_id=account_id)
+            by_figi_lots: Dict[str, int] = {f: 0 for f in figi_set}
+            for sec in getattr(pos, "securities", []):
+                f = getattr(sec, "figi", "")
+                if f in figi_set:
+                    by_figi_lots[f] = int(self._to_float(getattr(sec, "balance", 0)))
+
+            for f in figi_set:
+                fs = self.state.get(f)
+                prev_lots = int(fs.position_lots)
+                fs.position_lots = int(by_figi_lots.get(f, 0))
+
+                # Entry bookkeeping
+                if prev_lots > 0 and int(fs.position_lots) == 0:
+                    fs.entry_price = None
+                    fs.entry_time = None
+                if prev_lots == 0 and int(fs.position_lots) > 0:
+                    if fs.entry_time is None:
+                        fs.entry_time = now()
+                    if fs.entry_price is None:
+                        last = self.get_last_price(f)
+                        if last is not None:
+                            fs.entry_price = float(last)
+        except Exception as e:
+            self.log(f"[WARN] get_positions failed: {e}")
+
+        # Orders (1 call)
+        try:
+            orders = self._call(self._orders_list_call(), account_id=account_id).orders
+            active_by_figi: Dict[str, str] = {}
+            for o in orders:
+                f = getattr(o, "figi", "")
+                if f in figi_set and f not in active_by_figi:
+                    active_by_figi[f] = getattr(o, "order_id", "")
+
+            for f in figi_set:
+                fs = self.state.get(f)
+                fs.active_order_id = active_by_figi.get(f) or None
+        except Exception as e:
+            self.log(f"[WARN] get_orders failed: {e}")
 
     # ---------- robust numeric converters ----------
     @staticmethod
@@ -441,6 +506,7 @@ class Broker:
         try:
             self._call(self._order_cancel_call(), account_id=account_id, order_id=oid)
             self.log(f"[CANCEL] {figi} order_id={oid}")
+            self.notify(f"[CANCEL] {self._ticker_for_figi(figi) or figi} order_id={oid}", throttle_sec=0)
 
             self.journal_event(
                 "CANCEL",
@@ -458,6 +524,7 @@ class Broker:
             fs.client_order_uid = None
         except Exception as e:
             self.log(f"[WARN] cancel_order failed: {e}")
+            self.notify(f"[WARN] cancel failed: {self._ticker_for_figi(figi) or figi} | {e}", throttle_sec=120)
 
     def place_limit_buy(self, account_id: str, figi: str, price: float, quantity_lots: int = 1) -> bool:
         fs = self.state.get(figi)
@@ -468,6 +535,32 @@ class Broker:
             return False
 
         price_f = self._normalize_price(figi, float(price))
+
+        # cash pre-check (prevents repeated "not enough balance" API rejects)
+        info = self._figi_info.get(figi)
+        lot = int(info.lot) if info else 1
+        est_cost = float(price_f) * float(lot) * float(quantity_lots)
+        cash = self.get_cash_rub(account_id)
+        if cash > 0 and cash < est_cost * 1.01:  # small buffer
+            now_ts = time.time()
+            last_warn = self._last_low_cash_warn.get(figi, 0.0)
+            if now_ts - last_warn >= 300:  # warn at most once per 5 minutes per figi
+                self._last_low_cash_warn[figi] = now_ts
+                msg = f"[SKIP] BUY {figi}: not enough cash (cash={cash:.2f} need≈{est_cost:.2f})"
+                self.log(msg)
+                self.notify(msg, throttle_sec=0)
+            self.journal_event(
+                "SKIP",
+                figi,
+                side="BUY",
+                lots=int(quantity_lots),
+                price=float(price_f),
+                order_id=None,
+                client_uid=None,
+                status="NO_CASH",
+                reason="insufficient_cash_precheck",
+            )
+            return False
         client_uid = str(uuid.uuid4())
         q = decimal_to_quotation(Decimal(str(price_f)))
 
@@ -485,9 +578,8 @@ class Broker:
 
             fs.client_order_uid = client_uid
             fs.active_order_id = r.order_id
-            self.state.trades_today += 1
-
             self.log(f"[ORDER] BUY {figi} qty={int(quantity_lots)} price={price_f} (client_uid={client_uid})")
+            self.notify(f"[ORDER] BUY {self._ticker_for_figi(figi) or figi} qty={int(quantity_lots)} price={price_f}", throttle_sec=0)
 
             self.journal_event(
                 "SUBMIT",
@@ -504,6 +596,7 @@ class Broker:
             return True
         except Exception as e:
             self.log(f"[WARN] post_order BUY failed: {e}")
+            self.notify(f"[WARN] BUY submit failed: {self._ticker_for_figi(figi) or figi} | {e}", throttle_sec=120)
             return False
 
     def place_limit_sell_to_close(self, account_id: str, figi: str, price: float) -> bool:
@@ -534,6 +627,7 @@ class Broker:
             fs.active_order_id = r.order_id
 
             self.log(f"[ORDER] SELL {figi} qty={int(fs.position_lots)} price={price_f} (client_uid={client_uid})")
+            self.notify(f"[ORDER] SELL {self._ticker_for_figi(figi) or figi} qty={int(fs.position_lots)} price={price_f}", throttle_sec=0)
 
             self.journal_event(
                 "SUBMIT",
@@ -550,6 +644,7 @@ class Broker:
             return True
         except Exception as e:
             self.log(f"[WARN] post_order SELL failed: {e}")
+            self.notify(f"[WARN] SELL submit failed: {self._ticker_for_figi(figi) or figi} | {e}", throttle_sec=120)
             return False
 
     # ---------- order execution polling ----------
@@ -617,6 +712,15 @@ class Broker:
                     reason="filled",
                 )
 
+                # Count "trades" on ENTRY fills (BUY) rather than submits.
+                if side == "BUY":
+                    self.state.trades_today += 1
+
+                self.notify(
+                    f"[FILL] {side} {self._ticker_for_figi(figi) or figi} lots={lots_executed} price={avg_price}",
+                    throttle_sec=0,
+                )
+
                 if side == "BUY":
                     if fs.entry_time is None:
                         fs.entry_time = now()
@@ -638,6 +742,7 @@ class Broker:
                     status=status,
                     reason="cancelled_by_api",
                 )
+                self.notify(f"[CANCELLED] {self._ticker_for_figi(figi) or figi}", throttle_sec=0)
 
             elif status == "EXECUTION_REPORT_STATUS_REJECTED":
                 self.journal_event(
@@ -651,6 +756,7 @@ class Broker:
                     status=status,
                     reason="rejected",
                 )
+                self.notify(f"[REJECT] {self._ticker_for_figi(figi) or figi} | status={status}", throttle_sec=60)
 
             fs.active_order_id = None
             fs.client_order_uid = None
