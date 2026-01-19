@@ -41,6 +41,8 @@ def main():
 
     sleep_sec = float(cfg.get("runtime", {}).get("sleep_sec", 55))
     error_sleep_sec = float(cfg.get("runtime", {}).get("error_sleep_sec", 10))
+    # Heartbeat interval (seconds). Default: 5 minutes.
+    heartbeat_sec = float(cfg.get("runtime", {}).get("heartbeat_sec", 300))
 
     with Client(token) as client:
         broker = Broker(client, cfg["broker"], notifier=notifier)
@@ -73,8 +75,8 @@ def main():
             try:
                 ts = now()
 
-                # Heartbeat раз в минуту
-                if time.time() - last_hb >= 60:
+                # Heartbeat (default: every 5 minutes)
+                if time.time() - last_hb >= heartbeat_sec:
                     broker.log(f"[HB] alive | utc={ts.isoformat()}")
                     last_hb = time.time()
 
@@ -141,13 +143,22 @@ def main():
 
                     # журналируем сигнал
                     if action in ("BUY", "SELL"):
+                        price = signal.get("price")
+                        reason = signal.get("reason", "")
+                        inst = broker.format_instrument(figi)
+                        cash = broker.get_cached_cash_rub(account_id)
+
+                        broker.log(
+                            f"[SIGNAL] {action} {inst} @ {price} | cash≈{cash:.2f} {cfg['broker'].get('currency','rub').upper()} | {reason}"
+                        )
+
                         broker.journal_event(
                             "SIGNAL",
                             figi,
                             side=action,
                             lots=1,
-                            price=signal.get("price"),
-                            reason=signal.get("reason", ""),
+                            price=price,
+                            reason=reason,
                         )
 
                     # 5) исполнение
@@ -157,14 +168,10 @@ def main():
                         if not risk.allow_new_trade(broker.state, account_id, figi):
                             continue
 
-                        ok = broker.place_limit_buy(account_id, figi, signal["price"])
-                        if ok:
-                            broker.log(f"[SIGNAL] BUY {figi} @ {signal['price']} | {signal.get('reason', '')}")
+                        broker.place_limit_buy(account_id, figi, signal["price"])
 
                     elif action == "SELL":
-                        ok = broker.place_limit_sell_to_close(account_id, figi, signal["price"])
-                        if ok:
-                            broker.log(f"[SIGNAL] SELL {figi} @ {signal['price']} | {signal.get('reason', '')}")
+                        broker.place_limit_sell_to_close(account_id, figi, signal["price"])
 
                 # дневной предохранитель
                 day_metric = broker.calc_day_cashflow(account_id)
