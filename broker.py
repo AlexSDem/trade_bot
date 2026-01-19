@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from decimal import Decimal
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Any
 
 import pandas as pd
 
@@ -85,6 +85,34 @@ class Broker:
     def log(self, msg: str):
         self.logger.info(msg)
         print(msg)
+
+    # ---------- robust numeric converters ----------
+    @staticmethod
+    def _to_float(x: Any) -> float:
+        """
+        Safe converter for Quotation/MoneyValue-like objects and plain numbers.
+
+        Fixes errors like: "'int' object has no attribute 'nano'"
+        that happen when code expects Quotation/MoneyValue but gets 0 / int / float.
+        """
+        if x is None:
+            return 0.0
+        if isinstance(x, (int, float)):
+            return float(x)
+        if isinstance(x, Decimal):
+            return float(x)
+
+        # Quotation / MoneyValue from SDK: have .units and .nano
+        units = getattr(x, "units", None)
+        nano = getattr(x, "nano", None)
+        if isinstance(units, int) and isinstance(nano, int):
+            return float(units) + float(nano) / 1e9
+
+        # fallback: try SDK helper, but guard against wrong types
+        try:
+            return float(quotation_to_decimal(x))
+        except Exception:
+            return 0.0
 
     # ---------- journal helpers ----------
     def _ticker_for_figi(self, figi: str) -> str:
@@ -216,7 +244,7 @@ class Broker:
             cash = 0.0
             for m in pos.money:
                 if m.currency == self.currency:
-                    cash += float(quotation_to_decimal(m))
+                    cash += float(self._to_float(m))
             return float(cash)
         except Exception as e:
             self.log(f"[WARN] get_cash_rub failed: {e}")
@@ -267,7 +295,7 @@ class Broker:
 
             figi = share.figi
             lot = int(share.lot)
-            mpi = float(quotation_to_decimal(share.min_price_increment))
+            mpi = float(self._to_float(share.min_price_increment))
 
             info = InstrumentInfo(ticker=t, figi=figi, lot=lot, min_price_increment=float(mpi))
             out[t] = info
@@ -316,11 +344,7 @@ class Broker:
             if not r.last_prices:
                 return None
 
-            p = quotation_to_decimal(r.last_prices[0].price)
-            if p is None:
-                return None
-
-            return float(p)
+            return float(self._to_float(r.last_prices[0].price))
         except Exception:
             return None
 
@@ -344,10 +368,10 @@ class Broker:
             df = pd.DataFrame(
                 {
                     "time": [x.time for x in candles],
-                    "open": [float(quotation_to_decimal(x.open)) for x in candles],
-                    "high": [float(quotation_to_decimal(x.high)) for x in candles],
-                    "low": [float(quotation_to_decimal(x.low)) for x in candles],
-                    "close": [float(quotation_to_decimal(x.close)) for x in candles],
+                    "open": [float(self._to_float(x.open)) for x in candles],
+                    "high": [float(self._to_float(x.high)) for x in candles],
+                    "low": [float(self._to_float(x.low)) for x in candles],
+                    "close": [float(self._to_float(x.close)) for x in candles],
                     "volume": [int(x.volume) for x in candles],
                 }
             )
@@ -375,7 +399,10 @@ class Broker:
             lots = 0
             for sec in pos.securities:
                 if sec.figi == figi:
-                    lots = int(quotation_to_decimal(sec.balance))
+                    # IMPORTANT: sometimes SDK fields can be "0" (int) or Quotation-like.
+                    # We must not call .nano on int.
+                    lots_f = self._to_float(getattr(sec, "balance", 0))
+                    lots = int(lots_f)
                     break
             fs.position_lots = int(lots)
         except Exception as e:
@@ -549,7 +576,7 @@ class Broker:
         ap = getattr(st, "average_position_price", None)
         if ap is not None:
             try:
-                avg_price = float(quotation_to_decimal(ap))
+                avg_price = float(self._to_float(ap))
             except Exception:
                 avg_price = None
 
@@ -667,7 +694,7 @@ class Broker:
             total = 0.0
             for op in ops.operations:
                 if op.payment.currency == self.currency:
-                    total += float(quotation_to_decimal(op.payment))
+                    total += float(self._to_float(op.payment))
 
             return float(total)
         except Exception as e:
