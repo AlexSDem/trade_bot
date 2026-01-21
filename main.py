@@ -30,6 +30,23 @@ def get_token() -> str:
     return token
 
 
+def _send_daily_report(cfg: dict, broker: Broker, notifier, report_sent_for_day: str | None) -> str | None:
+    """Returns updated report_sent_for_day."""
+    day_key = datetime.now(timezone.utc).date().isoformat()
+    if report_sent_for_day == day_key:
+        return report_sent_for_day
+
+    try:
+        df = load_trades(cfg["broker"].get("trades_csv", "logs/trades.csv"))
+        report = build_report(df, datetime.now(timezone.utc).date())
+        broker.log(report)
+        notifier.send(report, throttle_sec=0)
+        return day_key
+    except Exception as e:
+        broker.log(f"[WARN] Daily report generation failed: {e}")
+        return report_sent_for_day
+
+
 def main():
     cfg = load_config()
     token = get_token()
@@ -41,8 +58,10 @@ def main():
 
     sleep_sec = float(cfg.get("runtime", {}).get("sleep_sec", 55))
     error_sleep_sec = float(cfg.get("runtime", {}).get("error_sleep_sec", 10))
-    # Heartbeat interval (seconds). Default: 5 minutes.
     heartbeat_sec = float(cfg.get("runtime", {}).get("heartbeat_sec", 300))
+
+    # NEW: TTL for limit orders (seconds)
+    order_ttl_sec = int(cfg.get("runtime", {}).get("order_ttl_sec", 300))
 
     with Client(token) as client:
         broker = Broker(client, cfg["broker"], notifier=notifier)
@@ -55,7 +74,7 @@ def main():
             throttle_sec=0,
         )
 
-        # >>> NEW: ensure sandbox cash
+        # ensure sandbox cash
         if cfg["broker"].get("use_sandbox", True):
             min_cash = float(cfg["broker"].get("min_sandbox_cash_rub", 12000))
             broker.ensure_sandbox_cash(account_id, min_cash_rub=min_cash)
@@ -75,50 +94,28 @@ def main():
             try:
                 ts = now()
 
-                # Heartbeat (default: every 5 minutes)
+                # Heartbeat
                 if time.time() - last_hb >= heartbeat_sec:
                     broker.log(f"[HB] alive | utc={ts.isoformat()}")
                     last_hb = time.time()
 
-                # Вне торгового окна — только закрываемся при необходимости
+                # Outside trading window: only flatten + daily report once
                 if not broker.is_trading_time(ts, cfg["schedule"]):
                     broker.flatten_if_needed(account_id, cfg["schedule"])
-
-                    # Если день уже закончился — один раз строим дневной отчёт и отправляем в TG
                     if broker.flatten_due(ts, cfg["schedule"]):
-                        day_key = datetime.now(timezone.utc).date().isoformat()
-                        if report_sent_for_day != day_key:
-                            try:
-                                df = load_trades(cfg["broker"].get("trades_csv", "logs/trades.csv"))
-                                report = build_report(df, datetime.now(timezone.utc).date())
-                                broker.log(report)
-                                notifier.send(report, throttle_sec=0)
-                                report_sent_for_day = day_key
-                            except Exception as e:
-                                broker.log(f"[WARN] Daily report generation failed: {e}")
+                        report_sent_for_day = _send_daily_report(cfg, broker, notifier, report_sent_for_day)
 
                     time.sleep(min(10, sleep_sec))
                     continue
 
-                # Если время закрываться — закрываемся
+                # Flatten time
                 if broker.flatten_due(ts, cfg["schedule"]):
                     broker.flatten_if_needed(account_id, cfg["schedule"])
-
-                    day_key = datetime.now(timezone.utc).date().isoformat()
-                    if report_sent_for_day != day_key:
-                        try:
-                            df = load_trades(cfg["broker"].get("trades_csv", "logs/trades.csv"))
-                            report = build_report(df, datetime.now(timezone.utc).date())
-                            broker.log(report)
-                            notifier.send(report, throttle_sec=0)
-                            report_sent_for_day = day_key
-                        except Exception as e:
-                            broker.log(f"[WARN] Daily report generation failed: {e}")
-
+                    report_sent_for_day = _send_daily_report(cfg, broker, notifier, report_sent_for_day)
                     time.sleep(min(10, sleep_sec))
                     continue
 
-                # Дневной лок
+                # Day lock
                 if risk.day_locked():
                     time.sleep(30)
                     continue
@@ -129,27 +126,40 @@ def main():
                 broker.refresh_account_snapshot(account_id, figis)
 
                 for figi in figis:
-                    # проверяем изменения статуса активной заявки
+                    # 1) order state updates
                     broker.poll_order_updates(account_id, figi)
 
-                    # 3) свечи
+                    # 2) expire stale orders (TTL) to avoid "stuck all day" behavior
+                    # if expired -> skip signals this loop for this figi
+                    if order_ttl_sec > 0:
+                        expired = broker.expire_stale_orders(account_id, figi, ttl_sec=order_ttl_sec)
+                        if expired:
+                            continue
+
+                    # 3) candles
                     candles = broker.get_last_candles_1m(figi, lookback_minutes=cfg["strategy"]["lookback_minutes"])
                     if candles is None or len(candles) < 30:
                         continue
 
-                    # 4) сигнал
+                    # 4) signal
                     signal = strategy.make_signal(figi, candles, broker.state)
                     action = signal.get("action", "HOLD")
 
-                    # журналируем сигнал
+                    # pick price for logging and limit placement
+                    last_price = signal.get("price")
+                    limit_price = signal.get("limit_price", last_price)  # NEW: strategy can suggest limit_price
+                    reason = signal.get("reason", "")
+
+                    # journal signals
                     if action in ("BUY", "SELL"):
-                        price = signal.get("price")
-                        reason = signal.get("reason", "")
                         inst = broker.format_instrument(figi)
                         cash = broker.get_cached_cash_rub(account_id)
+                        free_cash = broker.get_free_cash_rub_estimate(account_id)
 
+                        lp_txt = f" limit={float(limit_price):.4f}" if limit_price is not None else ""
                         broker.log(
-                            f"[SIGNAL] {action} {inst} @ {price} | cash≈{cash:.2f} {cfg['broker'].get('currency','rub').upper()} | {reason}"
+                            f"[SIGNAL] {action} {inst} last={last_price}{lp_txt} "
+                            f"| cash≈{cash:.2f} free≈{free_cash:.2f} {cfg['broker'].get('currency','rub').upper()} | {reason}"
                         )
 
                         broker.journal_event(
@@ -157,23 +167,29 @@ def main():
                             figi,
                             side=action,
                             lots=1,
-                            price=price,
+                            price=float(last_price) if last_price is not None else None,
                             reason=reason,
+                            meta={"limit_price": float(limit_price) if limit_price is not None else None},
                         )
 
-                    # 5) исполнение
+                    # 5) execution
                     if action == "BUY":
                         if not entries_allowed:
                             continue
                         if not risk.allow_new_trade(broker.state, account_id, figi):
                             continue
 
-                        broker.place_limit_buy(account_id, figi, signal["price"])
+                        # NEW: place buy using limit_price (recommended) instead of last
+                        if limit_price is None:
+                            continue
+                        broker.place_limit_buy(account_id, figi, float(limit_price))
 
                     elif action == "SELL":
-                        broker.place_limit_sell_to_close(account_id, figi, signal["price"])
+                        if limit_price is None:
+                            continue
+                        broker.place_limit_sell_to_close(account_id, figi, float(limit_price))
 
-                # дневной предохранитель
+                # day safety metric
                 day_metric = broker.calc_day_cashflow(account_id)
                 risk.update_day_pnl(day_metric)
 
@@ -198,7 +214,6 @@ def main():
                 consecutive_errors += 1
                 notifier.send(f"[ERROR] Main loop error: {e}", throttle_sec=120)
 
-                # fail-fast if something repeats over and over
                 if consecutive_errors >= int(cfg.get("runtime", {}).get("max_consecutive_errors", 8)):
                     broker.log("[ERROR] Too many consecutive errors. Stopping bot.")
                     notifier.send("[FATAL] Too many consecutive errors. Stopping bot.", throttle_sec=0)
