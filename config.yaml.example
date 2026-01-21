@@ -28,12 +28,14 @@ strategy:
   stop_loss_pct: 0.006
   time_stop_minutes: 45
 
-  # NEW: filters to reduce noisy signals + avoid "signals but no fills"
-  # Minimal depth under buy_level in ATR units
+  # entry filters (как было в улучшенной версии)
   min_edge_atr: 0.05
-
-  # If price rebounds too far from buy_level, don't chase
   max_rebound_atr: 0.25
+
+  # Variant A: time-stop changes behavior (no forced SELL by time)
+  time_stop_tighten_stop_loss_pct: 0.0025   # после 45 минут стоп подтягиваем до -0.25% от entry
+  breakeven_pct: 0.0005                     # безопасный выход на +0.05% от entry (примерно)
+  enable_time_stop_safe_exit: true          # разрешить закрытие, когда вернулись к VWAP/безубытку
 
 risk:
   max_lot_cost_rub: 3500
