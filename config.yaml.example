@@ -28,18 +28,38 @@ strategy:
   stop_loss_pct: 0.006
   time_stop_minutes: 45
 
+  # NEW: filters to reduce noisy signals + avoid "signals but no fills"
+  # Minimal depth under buy_level in ATR units
+  min_edge_atr: 0.05
+
+  # If price rebounds too far from buy_level, don't chase
+  max_rebound_atr: 0.25
+
 risk:
   max_lot_cost_rub: 3500
   max_day_loss_rub: 100
   max_trades_per_day: 3
+
+  # Main portfolio constraint
   max_positions: 1
+
+  # Per-figi constraint (legacy)
   max_active_orders_per_figi: 1
+
+  # NEW: portfolio-level constraints for pending orders
+  # Conservative default: same as max_positions
+  max_pending_buys_total: 1
+  max_active_orders_total: 1
 
 runtime:
   sleep_sec: 55
   heartbeat_sec: 300
   error_sleep_sec: 10
   max_consecutive_errors: 8
+
+  # NEW: cancel/expire limit orders if not filled within TTL
+  # (prevents "stuck all day" and frees slots for new signals)
+  order_ttl_sec: 300
 
 telegram:
   enabled: true
