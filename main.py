@@ -43,11 +43,8 @@ def main():
     error_sleep_sec = float(cfg.get("runtime", {}).get("error_sleep_sec", 10))
     heartbeat_sec = float(cfg.get("runtime", {}).get("heartbeat_sec", 300))
 
-    # portfolio status cadence
     portfolio_sec = float(cfg.get("runtime", {}).get("portfolio_sec", 1800))  # 30 min default
-
-    # NEW: order TTL (avoid "stuck all day")
-    order_ttl_sec = int(cfg.get("runtime", {}).get("order_ttl_sec", 300))
+    order_ttl_sec = int(cfg.get("runtime", {}).get("order_ttl_sec", 300))      # 5 min default
 
     with Client(token) as client:
         broker = Broker(client, cfg["broker"], notifier=notifier)
@@ -71,7 +68,7 @@ def main():
             broker.log("[ERROR] Нет подходящих инструментов под max_lot_cost_rub. Увеличь лимит или измени tickers.")
             return
 
-        # portfolio snapshot on start
+        # Start snapshot
         try:
             txt = broker.build_portfolio_status(account_id, figis, title="Portfolio snapshot (start)")
             broker.log(txt)
@@ -107,7 +104,7 @@ def main():
                 if not broker.is_trading_time(ts, cfg["schedule"]):
                     broker.flatten_if_needed(account_id, cfg["schedule"])
 
-                    # End of day report + end portfolio snapshot
+                    # End of day report + end portfolio
                     if broker.flatten_due(ts, cfg["schedule"]):
                         day_key = datetime.now(timezone.utc).date().isoformat()
                         if report_sent_for_day != day_key:
@@ -131,7 +128,7 @@ def main():
                     time.sleep(min(10, sleep_sec))
                     continue
 
-                # Flatten time (within trading window)
+                # Flatten time
                 if broker.flatten_due(ts, cfg["schedule"]):
                     broker.flatten_if_needed(account_id, cfg["schedule"])
 
@@ -164,27 +161,35 @@ def main():
 
                 entries_allowed = broker.new_entries_allowed(ts, cfg["schedule"])
 
-                # 1x per loop: snapshot (positions + orders)
+                # 1x per loop: positions+orders snapshot (IMPORTANT: do not lose active_order_id here)
                 broker.refresh_account_snapshot(account_id, figis)
 
                 for figi in figis:
-                    # order state updates
-                    broker.poll_order_updates(account_id, figi)
-
-                    # NEW: cancel stale orders to free slots/cash
+                    # 0) expire stale orders (frees slots and avoids "stuck forever")
                     if order_ttl_sec > 0:
                         broker.expire_stale_orders(account_id, figi, ttl_sec=order_ttl_sec)
 
-                    # candles
+                    # 1) poll updates (FILL/CANCEL/REJECT must be recorded)
+                    broker.poll_order_updates(account_id, figi)
+
+                    # 2) candles
                     candles = broker.get_last_candles_1m(figi, lookback_minutes=cfg["strategy"]["lookback_minutes"])
                     if candles is None or len(candles) < 30:
                         continue
 
-                    # signal
+                    # IMPORTANT: use real last price for stops/takes (not stale candle close)
+                    last_px = broker.get_last_price(figi)
+                    if last_px is not None and len(candles) > 0:
+                        try:
+                            candles.loc[candles.index[-1], "close"] = float(last_px)
+                        except Exception:
+                            pass
+
+                    # 3) signal
                     signal = strategy.make_signal(figi, candles, broker.state)
                     action = signal.get("action", "HOLD")
 
-                    # log/journal signal
+                    # log signals
                     if action in ("BUY", "SELL"):
                         price = signal.get("price")
                         limit_price = signal.get("limit_price", price)
@@ -212,16 +217,12 @@ def main():
                             meta={"limit_price": float(limit_price) if limit_price is not None else None},
                         )
 
-                    # execute
+                    # 4) execute
                     if action == "BUY":
                         if not entries_allowed:
                             continue
-
-                        ok, why = risk.allow_new_trade_reason(broker.state, account_id, figi)
-                        if not ok:
-                            broker.log(f"[RISK] BLOCK BUY {broker.format_instrument(figi)} reason={why}")
+                        if not risk.allow_new_trade(broker.state, account_id, figi):
                             continue
-
                         broker.place_limit_buy(account_id, figi, signal.get("limit_price", signal["price"]))
 
                     elif action == "SELL":
