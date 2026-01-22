@@ -36,13 +36,13 @@ class InstrumentInfo:
 
 class Broker:
     """
-    IMPORTANT TYPE RULE:
-      - internally we keep ALL prices as float
-      - Decimal is used ONLY when constructing Quotation/MoneyValue for API calls
-
-    IMPORTANT LOT RULE:
-      - positions.securities[].balance is often returned in "shares" (units), not lots.
-      - we convert shares -> lots using instrument.lot (floor(balance / lot)).
+    Broker wrapper for T-Invest with:
+      - sandbox/real routing
+      - ticker -> share resolution
+      - candle polling (1m)
+      - idempotent limit orders
+      - journal
+      - order polling (sandbox/real)
     """
 
     def __init__(self, client: Client, cfg: dict, notifier=None):
@@ -51,10 +51,7 @@ class Broker:
         self.state = BotState()
         self.notifier = notifier
 
-        # internal throttles
         self._last_low_cash_warn: Dict[str, float] = {}
-
-        # reserved money estimate for pending BUY orders (to show "free cash")
         self._reserved_rub_by_figi: Dict[str, float] = {}
 
         os.makedirs("logs", exist_ok=True)
@@ -73,18 +70,17 @@ class Broker:
         self.use_sandbox = bool(cfg.get("use_sandbox", True))
         self.class_code = cfg.get("class_code", "TQBR")
 
-        # retry/backoff
         self._retry_tries = int(cfg.get("retry_tries", 3))
         self._retry_sleep_min = float(cfg.get("retry_sleep_min", 1.0))
         self._retry_sleep_max = float(cfg.get("retry_sleep_max", 10.0))
 
-        # cache figi -> InstrumentInfo
-        self._figi_info: Dict[str, InstrumentInfo] = {}
+        # NEW: how close to last we want to place limit orders (ticks)
+        self.buy_aggressive_ticks = int(cfg.get("buy_aggressive_ticks", 1))
+        self.sell_aggressive_ticks = int(cfg.get("sell_aggressive_ticks", 1))
 
-        # last known cash from snapshot (to avoid extra API calls)
+        self._figi_info: Dict[str, InstrumentInfo] = {}
         self.last_cash_rub: float = 0.0
 
-        # CSV journal
         self.journal = TradeJournal(cfg.get("trades_csv", "logs/trades.csv"))
 
     # ---------- logging ----------
@@ -93,7 +89,6 @@ class Broker:
         print(msg)
 
     def notify(self, text: str, throttle_sec: float = 0.0):
-        """Best-effort Telegram notification (never raises)."""
         if not self.notifier:
             return
         try:
@@ -101,7 +96,7 @@ class Broker:
         except Exception:
             pass
 
-    # ---------- robust numeric converters ----------
+    # ---------- converters ----------
     @staticmethod
     def _to_float(x: Any) -> float:
         if x is None:
@@ -110,12 +105,10 @@ class Broker:
             return float(x)
         if isinstance(x, Decimal):
             return float(x)
-
         units = getattr(x, "units", None)
         nano = getattr(x, "nano", None)
         if isinstance(units, int) and isinstance(nano, int):
             return float(units) + float(nano) / 1e9
-
         try:
             return float(quotation_to_decimal(x))
         except Exception:
@@ -138,9 +131,6 @@ class Broker:
     def _ticker_for_figi(self, figi: str) -> str:
         info = self._figi_info.get(figi)
         return info.ticker if info else ""
-
-    def ticker_for_figi(self, figi: str) -> str:
-        return self._ticker_for_figi(figi)
 
     def format_instrument(self, figi: str) -> str:
         t = self._ticker_for_figi(figi)
@@ -196,7 +186,7 @@ class Broker:
         hh, mm = s.split(":")
         return datetime.strptime(f"{hh}:{mm}", "%H:%M").time()
 
-    # ---------- routing helpers (sandbox vs real) ----------
+    # ---------- routing helpers ----------
     def _positions_call(self):
         return self.client.sandbox.get_sandbox_positions if self.use_sandbox else self.client.operations.get_positions
 
@@ -238,7 +228,6 @@ class Broker:
                         self.log(f"[WARN] Sandbox pay-in failed: {e}")
 
                 return account_id
-
             return accs[0].id
 
         resp = self._call(self.client.users.get_accounts)
@@ -273,13 +262,7 @@ class Broker:
         return 0.0
 
     def _reserved_rub_total(self) -> float:
-        total = 0.0
-        for v in self._reserved_rub_by_figi.values():
-            try:
-                total += float(v)
-            except Exception:
-                pass
-        return float(total)
+        return float(sum(float(v) for v in self._reserved_rub_by_figi.values()))
 
     def get_free_cash_rub_estimate(self, account_id: str | None = None) -> float:
         cash = self.get_cached_cash_rub(account_id)
@@ -308,81 +291,55 @@ class Broker:
         except Exception as e:
             self.log(f"[WARN] Sandbox pay-in failed: {e}")
 
-    # ---------- account-wide snapshot (positions + orders) ----------
+    # ---------- account snapshot ----------
     def refresh_account_snapshot(self, account_id: str, figis: List[str]):
-    """
-    Pulls positions + orders once and updates state for provided figis.
+        self._ensure_day_rollover()
+        figi_set = set(figis)
 
-    IMPORTANT:
-      - do NOT clear fs.active_order_id just because the order disappeared from active orders list
-        (it may have been FILLED). Let poll_order_updates() fetch final state via get_order_state().
-    """
-    self._ensure_day_rollover()
-    figi_set = set(figis)
+        # Positions
+        try:
+            pos = self._call(self._positions_call(), account_id=account_id)
 
-    # -------- Positions (1 call)
-    try:
-        pos = self._call(self._positions_call(), account_id=account_id)
-
-        # cache cash
-        cash = 0.0
-        for m in getattr(pos, "money", []) or []:
-            try:
+            cash = 0.0
+            for m in getattr(pos, "money", []) or []:
                 if getattr(m, "currency", None) == self.currency:
                     cash += float(self._to_float(m))
-            except Exception:
-                pass
-        self.last_cash_rub = float(cash)
+            self.last_cash_rub = float(cash)
 
-        by_figi_lots: Dict[str, int] = {f: 0 for f in figi_set}
-        for sec in getattr(pos, "securities", []) or []:
-            f = getattr(sec, "figi", "")
-            if f in figi_set:
-                bal = getattr(sec, "balance", 0)
-                by_figi_lots[f] = int(self._balance_to_lots(f, bal))
+            by_figi_lots: Dict[str, int] = {f: 0 for f in figi_set}
+            for sec in getattr(pos, "securities", []) or []:
+                f = getattr(sec, "figi", "")
+                if f in figi_set:
+                    bal = getattr(sec, "balance", 0)
+                    by_figi_lots[f] = int(self._balance_to_lots(f, bal))
 
-        for f in figi_set:
-            fs = self.state.get(f)
-            prev_lots = int(fs.position_lots)
-            fs.position_lots = int(by_figi_lots.get(f, 0))
+            for f in figi_set:
+                fs = self.state.get(f)
+                prev_lots = int(fs.position_lots)
+                fs.position_lots = int(by_figi_lots.get(f, 0))
+                if prev_lots > 0 and int(fs.position_lots) == 0:
+                    fs.entry_price = None
+                    fs.entry_time = None
+        except Exception as e:
+            self.log(f"[WARN] get_positions failed: {e}")
 
-            # if position closed -> clear entry bookkeeping
-            if prev_lots > 0 and int(fs.position_lots) == 0:
-                fs.entry_price = None
-                fs.entry_time = None
+        # Orders
+        try:
+            orders = self._call(self._orders_list_call(), account_id=account_id).orders
+            active_by_figi: Dict[str, str] = {}
+            for o in orders:
+                f = getattr(o, "figi", "")
+                if f in figi_set and f not in active_by_figi:
+                    active_by_figi[f] = getattr(o, "order_id", "")
 
-    except Exception as e:
-        self.log(f"[WARN] get_positions failed: {e}")
-
-    # -------- Orders (1 call)
-    try:
-        orders = self._call(self._orders_list_call(), account_id=account_id).orders
-
-        # active orders by figi (first one is enough for our bot)
-        active_by_figi: Dict[str, str] = {}
-        for o in orders:
-            f = getattr(o, "figi", "")
-            if f in figi_set and f not in active_by_figi:
-                active_by_figi[f] = getattr(o, "order_id", "")
-
-        for f in figi_set:
-            fs = self.state.get(f)
-
-            if f in active_by_figi and active_by_figi[f]:
-                # broker reports an active order -> trust it
-                fs.active_order_id = active_by_figi[f]
-
-            else:
-                # broker reports NO active order for this figi
-                # IMPORTANT: if we have a local active_order_id, keep it and let poll_order_updates()
-                # determine if it was FILLED/CANCELLED/REJECTED.
-                if not fs.active_order_id:
-                    # no local order -> ok to clear meta
+            for f in figi_set:
+                fs = self.state.get(f)
+                fs.active_order_id = active_by_figi.get(f) or None
+                if fs.active_order_id is None:
                     self.state.clear_order(f)
                     self._reserved_rub_by_figi.pop(f, None)
-
-    except Exception as e:
-        self.log(f"[WARN] get_orders failed: {e}")
+        except Exception as e:
+            self.log(f"[WARN] get_orders failed: {e}")
 
     # ---------- instruments ----------
     def resolve_instruments(self, tickers: List[str]) -> Dict[str, InstrumentInfo]:
@@ -397,7 +354,7 @@ class Broker:
                 )
                 share = r.instrument
             except Exception as e:
-                self.log(f"[WARN] share_by(TICKER) failed for {t} class={self.class_code}: {e}")
+                self.log(f"[WARN] share_by failed for {t}: {e}")
                 continue
 
             figi = share.figi
@@ -420,9 +377,7 @@ class Broker:
                 self.log(f"[SKIP] {t} no last price")
                 continue
 
-            last_price_f = float(last_price)
-            lot_cost = last_price_f * int(info.lot)
-
+            lot_cost = float(last_price) * int(info.lot)
             if lot_cost <= float(max_lot_cost):
                 figis.append(info.figi)
                 self.log(f"[OK] {t} {info.figi} lot={info.lot} lot_cost≈{lot_cost:.2f}")
@@ -431,7 +386,7 @@ class Broker:
 
         return figis
 
-    # ---------- price helpers ----------
+    # ---------- rounding ----------
     @staticmethod
     def _round_to_step_down(price: float, step: float) -> float:
         if step <= 0:
@@ -448,13 +403,37 @@ class Broker:
         info = self._figi_info.get(figi)
         if not info:
             return float(price)
-
-        step = float(info.min_price_increment)
+        step = float(info.min_price_increment) if info.min_price_increment else 0.0
         p = float(price)
-
         if side.upper() == "BUY":
             return float(self._round_to_step_up(p, step))
         return float(self._round_to_step_down(p, step))
+
+    # NEW: "closest to current" limit price in ticks
+    def _aggressive_near_last(self, figi: str, side: str, suggested_price: float) -> float:
+        """
+        Make price максимально близко к last:
+          BUY -> around last + buy_aggressive_ticks * step (rounded up)
+          SELL -> around last - sell_aggressive_ticks * step (rounded down)
+        If last is unavailable, fall back to suggested_price.
+        """
+        info = self._figi_info.get(figi)
+        step = float(info.min_price_increment) if info and info.min_price_increment else 0.0
+        last = self.get_last_price(figi)
+
+        if last is None or step <= 0:
+            return float(self._normalize_price(figi, float(suggested_price), side=side))
+
+        if side.upper() == "BUY":
+            target = float(last) + float(self.buy_aggressive_ticks) * step
+            # keep not worse than suggested (so if strategy wants higher, allow it)
+            p = max(float(suggested_price), target)
+            return float(self._normalize_price(figi, p, side="BUY"))
+
+        # SELL
+        target = float(last) - float(self.sell_aggressive_ticks) * step
+        p = min(float(suggested_price), target)
+        return float(self._normalize_price(figi, p, side="SELL"))
 
     # ---------- market data ----------
     def get_last_price(self, figi: str) -> Optional[float]:
@@ -498,7 +477,7 @@ class Broker:
             self.log(f"[WARN] candles error {figi}: {e}")
             return None
 
-    # ---------- portfolio status (cash + positions + pnl) ----------
+    # ---------- portfolio status ----------
     def build_portfolio_status(self, account_id: str, figis: List[str], title: str = "") -> str:
         self.refresh_account_snapshot(account_id, figis)
 
@@ -543,12 +522,11 @@ class Broker:
 
         return "\n".join(lines)
 
-    # ---------- order helpers ----------
+    # ---------- orders ----------
     def _is_not_found_error(self, e: Exception) -> bool:
         s = str(e).upper()
         return ("NOT_FOUND" in s) or ("ORDER NOT FOUND" in s)
 
-    # ---------- orders ----------
     def cancel_active_order(self, account_id: str, figi: str, reason: str = "cancel_active_order"):
         fs = self.state.get(figi)
         if not fs.active_order_id:
@@ -565,7 +543,7 @@ class Broker:
             self.journal_event(
                 "CANCEL",
                 figi,
-                side=str(fs.order_side or ""),
+                side=str(getattr(fs, "order_side", "") or ""),
                 lots=None,
                 price=None,
                 order_id=oid,
@@ -576,17 +554,6 @@ class Broker:
         except Exception as e:
             if self._is_not_found_error(e):
                 self.log(f"[CANCEL] {self.format_instrument(figi)} order_id={oid} already gone (NOT_FOUND)")
-                self.journal_event(
-                    "CANCEL",
-                    figi,
-                    side=str(fs.order_side or ""),
-                    lots=None,
-                    price=None,
-                    order_id=oid,
-                    client_uid=cuid,
-                    status="NOT_FOUND",
-                    reason=f"{reason}:not_found",
-                )
             else:
                 self.log(f"[WARN] cancel_order failed: {e}")
                 self.notify(f"[WARN] cancel failed: {self._ticker_for_figi(figi) or figi} | {e}", throttle_sec=120)
@@ -597,13 +564,13 @@ class Broker:
 
     def place_limit_buy(self, account_id: str, figi: str, price: float, quantity_lots: int = 1) -> bool:
         fs = self.state.get(figi)
-
         if fs.active_order_id:
             return False
         if int(fs.position_lots) > 0:
             return False
 
-        price_f = self._normalize_price(figi, float(price), side="BUY")
+        # NEW: price near last (ticks)
+        price_f = self._aggressive_near_last(figi, "BUY", float(price))
 
         lot_size = self._lot_size(figi)
         est_cost = float(price_f) * float(lot_size) * float(quantity_lots)
@@ -700,7 +667,9 @@ class Broker:
         if fs.active_order_id:
             self.cancel_active_order(account_id, figi, reason="replace_before_sell")
 
-        price_f = self._normalize_price(figi, float(price), side="SELL")
+        # NEW: price near last (ticks)
+        price_f = self._aggressive_near_last(figi, "SELL", float(price))
+
         client_uid = str(uuid.uuid4())
         q = decimal_to_quotation(Decimal(str(price_f)))
 
@@ -754,7 +723,7 @@ class Broker:
             self.state.clear_order(figi)
             return False
 
-    # ---------- stale order handling ----------
+    # ---------- TTL expire ----------
     def expire_stale_orders(self, account_id: str, figi: str, ttl_sec: int) -> bool:
         fs = self.state.get(figi)
         if not fs.active_order_id or not fs.order_placed_ts:
@@ -771,7 +740,7 @@ class Broker:
         self.journal_event(
             "EXPIRE",
             figi,
-            side=str(fs.order_side or ""),
+            side=str(getattr(fs, "order_side", "") or ""),
             lots=None,
             price=None,
             order_id=fs.active_order_id,
@@ -784,7 +753,7 @@ class Broker:
         self.cancel_active_order(account_id, figi, reason="ttl_expired")
         return True
 
-    # ---------- order execution polling ----------
+    # ---------- order state polling ----------
     def poll_order_updates(self, account_id: str, figi: str):
         fs = self.state.get(figi)
         if not fs.active_order_id:
@@ -801,7 +770,7 @@ class Broker:
                 self.journal_event(
                     "STATE_LOST",
                     figi,
-                    side=str(fs.order_side or ""),
+                    side=str(getattr(fs, "order_side", "") or ""),
                     lots=None,
                     price=None,
                     order_id=oid,
@@ -828,21 +797,7 @@ class Broker:
             except Exception:
                 avg_price = None
 
-        side = "BUY" if "BUY" in direction else ("SELL" if "SELL" in direction else str(fs.order_side or ""))
-
-        if lots_executed > 0 and lots_requested > 0 and lots_executed < lots_requested:
-            self.journal_event(
-                "PARTIAL_FILL",
-                figi,
-                side=side,
-                lots=lots_executed,
-                price=avg_price,
-                order_id=oid,
-                client_uid=cuid,
-                status=status,
-                reason="partial_fill",
-                meta={"lots_requested": lots_requested},
-            )
+        side = "BUY" if "BUY" in direction else ("SELL" if "SELL" in direction else str(getattr(fs, "order_side", "") or ""))
 
         final_statuses = {
             "EXECUTION_REPORT_STATUS_FILL",
@@ -879,7 +834,6 @@ class Broker:
                         fs.entry_price = float(avg_price)
 
                 elif side == "SELL":
-                    # Realized PnL vs stored entry_price (per instrument)
                     try:
                         entry = fs.entry_price
                         if entry is not None and avg_price is not None:
@@ -887,24 +841,10 @@ class Broker:
                             qty_lots = float(lots_executed)
                             pnl_abs = (float(avg_price) - float(entry)) * float(lot_size) * qty_lots
                             pnl_pct = (float(avg_price) / float(entry) - 1.0) * 100.0
-
                             self.notify(
                                 f"[PNL] {self._ticker_for_figi(figi) or figi} "
                                 f"{pnl_abs:+.2f} RUB ({pnl_pct:+.2f}%) | entry={float(entry):.4f} exit={float(avg_price):.4f}",
                                 throttle_sec=0,
-                            )
-
-                            self.journal_event(
-                                "REALIZED_PNL",
-                                figi,
-                                side="SELL",
-                                lots=int(lots_executed),
-                                price=float(avg_price),
-                                order_id=oid,
-                                client_uid=cuid,
-                                status="REALIZED",
-                                reason="sell_fill_pnl",
-                                meta={"entry": float(entry), "pnl_abs": float(pnl_abs), "pnl_pct": float(pnl_pct)},
                             )
                     except Exception:
                         pass
