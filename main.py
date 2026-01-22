@@ -43,8 +43,11 @@ def main():
     error_sleep_sec = float(cfg.get("runtime", {}).get("error_sleep_sec", 10))
     heartbeat_sec = float(cfg.get("runtime", {}).get("heartbeat_sec", 300))
 
-    portfolio_sec = float(cfg.get("runtime", {}).get("portfolio_sec", 1800))  # 30 min by default
-    order_ttl_sec = int(cfg.get("runtime", {}).get("order_ttl_sec", 0))  # 0 = disabled
+    # portfolio status cadence
+    portfolio_sec = float(cfg.get("runtime", {}).get("portfolio_sec", 1800))  # 30 min default
+
+    # NEW: order TTL (avoid "stuck all day")
+    order_ttl_sec = int(cfg.get("runtime", {}).get("order_ttl_sec", 300))
 
     with Client(token) as client:
         broker = Broker(client, cfg["broker"], notifier=notifier)
@@ -68,7 +71,7 @@ def main():
             broker.log("[ERROR] Нет подходящих инструментов под max_lot_cost_rub. Увеличь лимит или измени tickers.")
             return
 
-        # Portfolio status on start
+        # portfolio snapshot on start
         try:
             txt = broker.build_portfolio_status(account_id, figis, title="Portfolio snapshot (start)")
             broker.log(txt)
@@ -90,7 +93,7 @@ def main():
                     broker.log(f"[HB] alive | utc={ts.isoformat()}")
                     last_hb = time.time()
 
-                # Portfolio snapshot every N seconds (default 30m)
+                # Portfolio snapshot every N seconds
                 if time.time() - last_portfolio_push >= portfolio_sec:
                     try:
                         txt = broker.build_portfolio_status(account_id, figis, title="Portfolio snapshot")
@@ -104,7 +107,7 @@ def main():
                 if not broker.is_trading_time(ts, cfg["schedule"]):
                     broker.flatten_if_needed(account_id, cfg["schedule"])
 
-                    # End of day report + end portfolio
+                    # End of day report + end portfolio snapshot
                     if broker.flatten_due(ts, cfg["schedule"]):
                         day_key = datetime.now(timezone.utc).date().isoformat()
                         if report_sent_for_day != day_key:
@@ -115,9 +118,7 @@ def main():
                                 notifier.send(report, throttle_sec=0)
 
                                 try:
-                                    txt = broker.build_portfolio_status(
-                                        account_id, figis, title="Portfolio snapshot (end)"
-                                    )
+                                    txt = broker.build_portfolio_status(account_id, figis, title="Portfolio snapshot (end)")
                                     broker.log(txt)
                                     notifier.send(txt, throttle_sec=0)
                                 except Exception as e:
@@ -130,7 +131,7 @@ def main():
                     time.sleep(min(10, sleep_sec))
                     continue
 
-                # Flatten time
+                # Flatten time (within trading window)
                 if broker.flatten_due(ts, cfg["schedule"]):
                     broker.flatten_if_needed(account_id, cfg["schedule"])
 
@@ -143,9 +144,7 @@ def main():
                             notifier.send(report, throttle_sec=0)
 
                             try:
-                                txt = broker.build_portfolio_status(
-                                    account_id, figis, title="Portfolio snapshot (end)"
-                                )
+                                txt = broker.build_portfolio_status(account_id, figis, title="Portfolio snapshot (end)")
                                 broker.log(txt)
                                 notifier.send(txt, throttle_sec=0)
                             except Exception as e:
@@ -165,19 +164,16 @@ def main():
 
                 entries_allowed = broker.new_entries_allowed(ts, cfg["schedule"])
 
-                # 1x per loop: account snapshot
+                # 1x per loop: snapshot (positions + orders)
                 broker.refresh_account_snapshot(account_id, figis)
 
                 for figi in figis:
-                    # (optional) cancel stale orders to free slots
-                    if order_ttl_sec and order_ttl_sec > 0:
-                        try:
-                            broker.expire_stale_orders(account_id, figi, ttl_sec=order_ttl_sec)
-                        except Exception:
-                            pass
-
-                    # order status updates
+                    # order state updates
                     broker.poll_order_updates(account_id, figi)
+
+                    # NEW: cancel stale orders to free slots/cash
+                    if order_ttl_sec > 0:
+                        broker.expire_stale_orders(account_id, figi, ttl_sec=order_ttl_sec)
 
                     # candles
                     candles = broker.get_last_candles_1m(figi, lookback_minutes=cfg["strategy"]["lookback_minutes"])
@@ -188,7 +184,7 @@ def main():
                     signal = strategy.make_signal(figi, candles, broker.state)
                     action = signal.get("action", "HOLD")
 
-                    # journal signals
+                    # log/journal signal
                     if action in ("BUY", "SELL"):
                         price = signal.get("price")
                         limit_price = signal.get("limit_price", price)
