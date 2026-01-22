@@ -55,10 +55,7 @@ class Broker:
         self.state = BotState()
         self.notifier = notifier
 
-        # internal throttles
         self._last_low_cash_warn: Dict[str, float] = {}
-
-        # estimated reserved cash by our own active BUY orders
         self._reserved_rub_by_figi: Dict[str, float] = {}
 
         os.makedirs("logs", exist_ok=True)
@@ -77,18 +74,13 @@ class Broker:
         self.use_sandbox = bool(cfg.get("use_sandbox", True))
         self.class_code = cfg.get("class_code", "TQBR")
 
-        # retry/backoff
         self._retry_tries = int(cfg.get("retry_tries", 3))
         self._retry_sleep_min = float(cfg.get("retry_sleep_min", 1.0))
         self._retry_sleep_max = float(cfg.get("retry_sleep_max", 10.0))
 
-        # cache figi -> InstrumentInfo
         self._figi_info: Dict[str, InstrumentInfo] = {}
-
-        # last known cash from snapshot (to avoid extra API calls)
         self.last_cash_rub: float = 0.0
 
-        # CSV journal
         self.journal = TradeJournal(cfg.get("trades_csv", "logs/trades.csv"))
 
     # ---------- logging ----------
@@ -97,7 +89,6 @@ class Broker:
         print(msg)
 
     def notify(self, text: str, throttle_sec: float = 0.0):
-        """Best-effort Telegram notification (never raises)."""
         if not self.notifier:
             return
         try:
@@ -124,6 +115,26 @@ class Broker:
             return float(quotation_to_decimal(x))
         except Exception:
             return 0.0
+
+    # ---------- lots conversion ----------
+    def _lot_size(self, figi: str) -> int:
+        info = self._figi_info.get(figi)
+        return int(info.lot) if info and int(info.lot) > 0 else 1
+
+    def _balance_to_lots(self, figi: str, balance_value: Any) -> int:
+        """
+        IMPORTANT:
+        Positions.securities[].balance can be returned in "units/shares", not in "lots".
+        For lot>1 instruments we must convert shares->lots.
+        """
+        bal = float(self._to_float(balance_value))
+        lot = self._lot_size(figi)
+        if lot <= 1:
+            return int(bal)
+
+        # floor to whole lots
+        lots = int(math.floor(bal / float(lot) + 1e-12))
+        return max(0, lots)
 
     # ---------- journal helpers ----------
     def _ticker_for_figi(self, figi: str) -> str:
@@ -187,7 +198,7 @@ class Broker:
         hh, mm = s.split(":")
         return datetime.strptime(f"{hh}:{mm}", "%H:%M").time()
 
-    # ---------- routing helpers (sandbox vs real) ----------
+    # ---------- routing helpers ----------
     def _positions_call(self):
         return self.client.sandbox.get_sandbox_positions if self.use_sandbox else self.client.operations.get_positions
 
@@ -320,7 +331,8 @@ class Broker:
             for sec in getattr(pos, "securities", []) or []:
                 f = getattr(sec, "figi", "")
                 if f in figi_set:
-                    by_figi_lots[f] = int(self._to_float(getattr(sec, "balance", 0)))
+                    bal = getattr(sec, "balance", 0)
+                    by_figi_lots[f] = int(self._balance_to_lots(f, bal))
 
             for f in figi_set:
                 fs = self.state.get(f)
@@ -330,6 +342,7 @@ class Broker:
                 if prev_lots > 0 and int(fs.position_lots) == 0:
                     fs.entry_price = None
                     fs.entry_time = None
+
         except Exception as e:
             self.log(f"[WARN] get_positions failed: {e}")
 
@@ -345,8 +358,6 @@ class Broker:
             for f in figi_set:
                 fs = self.state.get(f)
                 fs.active_order_id = active_by_figi.get(f) or None
-
-                # if broker says no order -> clear our local order bookkeeping
                 if fs.active_order_id is None:
                     fs.client_order_uid = None
                     fs.order_side = None
@@ -520,13 +531,11 @@ class Broker:
                 self.notify(f"[WARN] cancel failed: {self._ticker_for_figi(figi) or figi} | {e}", throttle_sec=120)
                 return
         finally:
-            # Always clear local state to avoid deadlocks
             self.state.clear_order(figi)
             self._reserved_rub_by_figi.pop(figi, None)
 
     def place_limit_buy(self, account_id: str, figi: str, price: float, quantity_lots: int = 1) -> bool:
         fs = self.state.get(figi)
-
         if fs.active_order_id:
             return False
         if int(fs.position_lots) > 0:
@@ -618,8 +627,6 @@ class Broker:
         except Exception as e:
             self.log(f"[WARN] post_order BUY failed: {e}")
             self.notify(f"[WARN] BUY submit failed: {self._ticker_for_figi(figi) or figi} | {e}", throttle_sec=120)
-
-            # rollback local bookkeeping
             self.state.clear_order(figi)
             self._reserved_rub_by_figi.pop(figi, None)
             return False
@@ -682,17 +689,13 @@ class Broker:
         except Exception as e:
             self.log(f"[WARN] post_order SELL failed: {e}")
             self.notify(f"[WARN] SELL submit failed: {self._ticker_for_figi(figi) or figi} | {e}", throttle_sec=120)
-
             self.state.clear_order(figi)
             return False
 
     # ---------- TTL / stale order handling ----------
     def expire_stale_orders(self, account_id: str, figi: str, ttl_sec: int) -> bool:
         fs = self.state.get(figi)
-        if not fs.active_order_id:
-            return False
-
-        if not fs.order_placed_ts:
+        if not fs.active_order_id or not fs.order_placed_ts:
             return False
 
         age = (now() - fs.order_placed_ts).total_seconds()
@@ -747,7 +750,6 @@ class Broker:
                 self.state.clear_order(figi)
                 self._reserved_rub_by_figi.pop(figi, None)
                 return
-
             self.log(f"[WARN] get_order_state failed {figi}: {e}")
             return
 
@@ -765,20 +767,6 @@ class Broker:
                 avg_price = None
 
         side = "BUY" if "BUY" in direction else ("SELL" if "SELL" in direction else str(fs.order_side or ""))
-
-        if lots_executed > 0 and lots_requested > 0 and lots_executed < lots_requested:
-            self.journal_event(
-                "PARTIAL_FILL",
-                figi,
-                side=side,
-                lots=lots_executed,
-                price=avg_price,
-                order_id=oid,
-                client_uid=cuid,
-                status=status,
-                reason="partial_fill",
-                meta={"lots_requested": lots_requested},
-            )
 
         final_statuses = {
             "EXECUTION_REPORT_STATUS_FILL",
@@ -889,3 +877,4 @@ class Broker:
         except Exception as e:
             self.log(f"[WARN] calc_day_cashflow failed: {e}")
             return 0.0
+
