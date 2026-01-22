@@ -1,101 +1,37 @@
-        # internal reserved money estimate for pending BUY orders
-        self._reserved_rub_by_figi: Dict[str, float] = {}
-
-
-
-
-    def build_portfolio_status(self, account_id: str, figis: List[str], title: str = "") -> str:
-        """
-        Human-readable portfolio snapshot for TG/log:
-          - cash/free/reserved
-          - positions: lots, entry, last, pnl abs/% (vs entry)
-        """
-        # refresh snapshot first (positions+orders, and last_cash_rub)
-        self.refresh_account_snapshot(account_id, figis)
-
-        cash = float(self.get_cached_cash_rub(account_id))
-        reserved = float(sum(self._reserved_rub_by_figi.values())) if hasattr(self, "_reserved_rub_by_figi") else 0.0
-        free = float(max(0.0, cash - reserved))
-
-        lines = []
-        if title:
-            lines.append(title)
-        lines.append("------------------------------------------------------------")
-        lines.append(f"Cash: {cash:,.2f} RUB | Free≈{free:,.2f} | Reserved≈{reserved:,.2f}")
-        lines.append("Positions:")
-
-        any_pos = False
-        for figi in figis:
-            fs = self.state.get(figi)
-            lots = int(fs.position_lots)
-            if lots <= 0:
-                continue
-            any_pos = True
-
-            lot_size = 1
-            info = self._figi_info.get(figi)
-            if info:
-                lot_size = int(info.lot) if int(info.lot) > 0 else 1
-
-            last = self.get_last_price(figi)
-            ticker = self._ticker_for_figi(figi) or figi
-
-            entry = fs.entry_price
-            if entry is None or last is None:
-                lines.append(f"  {ticker:<5} lots={lots:<3} entry=N/A last={last if last is not None else 'N/A'}")
-                continue
-
-            pnl_abs = (float(last) - float(entry)) * float(lot_size) * float(lots)
-            pnl_pct = (float(last) / float(entry) - 1.0) * 100.0
-
-            lines.append(
-                f"  {ticker:<5} lots={lots:<3} entry={float(entry):.4f} last={float(last):.4f} "
-                f"PnL={pnl_abs:+.2f} RUB ({pnl_pct:+.2f}%)"
-            )
-
-        if not any_pos:
-            lines.append("  (no positions)")
-
-        return "\n".join(lines)
-
-
-
-
-
-
-                elif side == "SELL":
-                    # Realized PnL vs stored entry_price
-                    try:
-                        entry = fs.entry_price
-                        if entry is not None and avg_price is not None:
-                            info = self._figi_info.get(figi)
-                            lot_size = int(info.lot) if info and int(info.lot) > 0 else 1
-
-                            qty_lots = float(lots_executed)
-                            pnl_abs = (float(avg_price) - float(entry)) * float(lot_size) * qty_lots
-                            pnl_pct = (float(avg_price) / float(entry) - 1.0) * 100.0
-
-                            self.notify(
-                                f"[PNL] {self._ticker_for_figi(figi) or figi} "
-                                f"{pnl_abs:+.2f} RUB ({pnl_pct:+.2f}%) | entry={float(entry):.4f} exit={float(avg_price):.4f}",
-                                throttle_sec=0,
-                            )
-
-                            # optional: also journal it
-                            self.journal_event(
-                                "REALIZED_PNL",
-                                figi,
-                                side="SELL",
-                                lots=int(lots_executed),
-                                price=float(avg_price),
-                                order_id=oid,
-                                client_uid=cuid,
-                                status="REALIZED",
-                                reason="sell_fill_pnl",
-                                meta={"entry": float(entry), "pnl_abs": float(pnl_abs), "pnl_pct": float(pnl_pct)},
-                            )
-                    except Exception:
-                        pass
-
-                    fs.entry_price = None
-                    fs.entry_time = None
+[INFO] Account: 03e0156b-0554-4ea6-ab78-9aea6d687934 (sandbox=True)
+[INFO] Sandbox cash OK: 22970.29 rub
+[OK] SBER BBG004730N88 lot=1 lot_cost≈306.64
+[OK] GAZP BBG004730RP0 lot=10 lot_cost≈1264.40
+[SKIP] LKOH lot_cost≈5396.50 > 3500.00
+[OK] GMKN BBG004731489 lot=10 lot_cost≈1613.80
+[OK] TATN BBG004RVFFC0 lot=1 lot_cost≈567.90
+[OK] NVTK BBG00475KKY8 lot=1 lot_cost≈1245.40
+[OK] ROSN BBG004731354 lot=1 lot_cost≈399.70
+[OK] ALRS BBG004S68B31 lot=10 lot_cost≈423.80
+[INFO] Tradeable FIGIs: ['BBG004730N88', 'BBG004730RP0', 'BBG004731489', 'BBG004RVFFC0', 'BBG00475KKY8', 'BBG004731354', 'BBG004S68B31']
+Portfolio snapshot (start)
+------------------------------------------------------------
+Cash: 22,970.29 RUB | Free≈22,970.29 | Reserved≈0.00
+Positions:
+  GMKN  lots=1   entry=N/A last=161.38
+  ALRS  lots=1   entry=N/A last=42.38
+[HB] alive | utc=2026-01-22T08:59:49.505992+00:00
+Portfolio snapshot
+------------------------------------------------------------
+Cash: 22,970.29 RUB | Free≈22,970.29 | Reserved≈0.00
+Positions:
+  GMKN  lots=1   entry=N/A last=161.38
+  ALRS  lots=1   entry=N/A last=42.38
+[SIGNAL] BUY GAZP (BBG004730RP0) last=126.32 limit=126.4275 | cash≈22970.29 free≈22970.29 RUB | mean_reversion last<126.4275 edge_atr=1.979
+[SIGNAL] BUY GAZP (BBG004730RP0) last=126.32 limit=126.4370 | cash≈22970.29 free≈22970.29 RUB | mean_reversion last<126.4370 edge_atr=2.156
+[SIGNAL] BUY NVTK (BBG00475KKY8) last=1241.8 limit=1242.9631 | cash≈22970.29 free≈22970.29 RUB | mean_reversion last<1242.9631 edge_atr=1.596
+[SIGNAL] BUY GAZP (BBG004730RP0) last=126.39 limit=126.4348 | cash≈22970.29 free≈22970.29 RUB | mean_reversion last<126.4348 edge_atr=0.765
+[SIGNAL] BUY NVTK (BBG00475KKY8) last=1240.2 limit=1242.7858 | cash≈22970.29 free≈22970.29 RUB | mean_reversion last<1242.7858 edge_atr=3.176
+[SIGNAL] BUY GAZP (BBG004730RP0) last=126.39 limit=126.4404 | cash≈22970.29 free≈22970.29 RUB | mean_reversion last<126.4404 edge_atr=0.861
+[SIGNAL] BUY NVTK (BBG00475KKY8) last=1240.2 limit=1242.7699 | cash≈22970.29 free≈22970.29 RUB | mean_reversion last<1242.7699 edge_atr=3.156
+[HB] alive | utc=2026-01-22T09:05:22.371498+00:00
+[SIGNAL] BUY GAZP (BBG004730RP0) last=126.41 limit=126.4442 | cash≈22970.29 free≈22970.29 RUB | mean_reversion last<126.4442 edge_atr=0.607
+[SIGNAL] BUY NVTK (BBG00475KKY8) last=1238.4 limit=1242.3799 | cash≈22970.29 free≈22970.29 RUB | mean_reversion last<1242.3799 edge_atr=4.038
+[SIGNAL] BUY ROSN (BBG004731354) last=399.05 limit=399.1106 | cash≈22970.29 free≈22970.29 RUB | mean_reversion last<399.1106 edge_atr=0.253
+[SIGNAL] BUY GAZP (BBG004730RP0) last=126.43 limit=126.4488 | cash≈22970.29 free≈22970.29 RUB | mean_reversion last<126.4488 edge_atr=0.347
+[SIGNAL] BUY NVTK (BBG00475KKY8) last=1241.0 limit=1242.1767 | cash≈22970.29 free≈22970.29 RUB | mean_reversion last<1242.1767 edge_atr=1.030
