@@ -37,7 +37,6 @@ class RiskManager:
     def _count_pending_buys(state) -> int:
         """
         Conservative: treat any active order on a figi WITHOUT position as a pending BUY.
-        (We don't always know side here. For this bot's entry logic it's enough.)
         """
         cnt = 0
         for _, fs in state.figi.items():
@@ -52,10 +51,6 @@ class RiskManager:
         return ok
 
     def allow_new_trade_reason(self, state, account_id: str, figi: str):
-        """
-        Проверки именно на ОТКРЫТИЕ новой позиции (BUY).
-        Возвращает (ok: bool, reason: str)
-        """
         # 1) дневной лок
         if self._locked:
             return False, "day_locked"
@@ -71,11 +66,11 @@ class RiskManager:
 
         fs = state.figi.get(figi)
 
-        # 4) если у figi уже висит активная заявка — не ставим новую (если запрещено)
+        # 4) если по figi уже висит активная заявка — не ставим новую
         if fs and getattr(fs, "active_order_id", None) and int(self.max_active_orders_per_figi) <= 1:
             return False, "active_order_exists_for_figi"
 
-        # 5) портфельные ограничения: позиции + pending BUY считаем как "занятые слоты"
+        # 5) портфельные ограничения: позиции + pending BUY как "занятые слоты"
         open_positions = self._count_open_positions(state)
         pending_buys = self._count_pending_buys(state)
         if (open_positions + pending_buys) >= int(self.max_positions):
@@ -85,7 +80,7 @@ class RiskManager:
         if pending_buys >= int(self.max_pending_buys_total):
             return False, f"max_pending_buys_total (pending={pending_buys} limit={self.max_pending_buys_total})"
 
-        # 7) общий лимит активных ордеров любого типа
+        # 7) общий лимит активных ордеров
         active_orders = self._count_active_orders(state)
         if active_orders >= int(self.max_active_orders_total):
             return False, f"max_active_orders_total (active={active_orders} limit={self.max_active_orders_total})"
