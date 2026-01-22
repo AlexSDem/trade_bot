@@ -36,14 +36,6 @@ class InstrumentInfo:
 
 class Broker:
     """
-    T-Invest broker wrapper with:
-      - sandbox/real routing for account-bound methods (positions/orders/operations)
-      - robust ticker -> share resolution via share_by(TICKER, class_code)
-      - candle polling (1m)
-      - idempotent limit orders (client uid)
-      - CSV trade journal (signals/orders/fills/cancels/rejects)
-      - order execution polling via get_order_state (sandbox/real)
-
     IMPORTANT TYPE RULE:
       - internally we keep ALL prices as float
       - Decimal is used ONLY when constructing Quotation/MoneyValue for API calls
@@ -112,12 +104,6 @@ class Broker:
     # ---------- robust numeric converters ----------
     @staticmethod
     def _to_float(x: Any) -> float:
-        """
-        Safe converter for Quotation/MoneyValue-like objects and plain numbers.
-
-        Fixes errors like: "'int' object has no attribute 'nano'"
-        that happen when code expects Quotation/MoneyValue but gets 0 / int / float.
-        """
         if x is None:
             return 0.0
         if isinstance(x, (int, float)):
@@ -125,13 +111,11 @@ class Broker:
         if isinstance(x, Decimal):
             return float(x)
 
-        # Quotation / MoneyValue from SDK: have .units and .nano
         units = getattr(x, "units", None)
         nano = getattr(x, "nano", None)
         if isinstance(units, int) and isinstance(nano, int):
             return float(units) + float(nano) / 1e9
 
-        # fallback: try SDK helper, but guard against wrong types
         try:
             return float(quotation_to_decimal(x))
         except Exception:
@@ -143,15 +127,10 @@ class Broker:
         return int(info.lot) if info and int(info.lot) > 0 else 1
 
     def _balance_to_lots(self, figi: str, balance_value: Any) -> int:
-        """
-        positions.securities[].balance is commonly returned in SHARES/UNITS, not lots.
-        Convert shares -> lots using instrument.lot.
-        """
         bal = float(self._to_float(balance_value))
         lot = self._lot_size(figi)
         if lot <= 1:
             return int(bal)
-
         lots = int(math.floor(bal / float(lot) + 1e-12))
         return max(0, lots)
 
@@ -164,7 +143,6 @@ class Broker:
         return self._ticker_for_figi(figi)
 
     def format_instrument(self, figi: str) -> str:
-        """Human-friendly instrument label for logs/TG."""
         t = self._ticker_for_figi(figi)
         return f"{t} ({figi})" if t else figi
 
@@ -239,13 +217,6 @@ class Broker:
 
     # ---------- accounts / sandbox ----------
     def pick_account_id(self) -> str:
-        """
-        In sandbox:
-          - if no accounts -> open
-          - optional pay-in at creation (sandbox_pay_in_rub)
-        In real:
-          - pick first account from users.get_accounts()
-        """
         if self.use_sandbox:
             accs = self._call(self.client.sandbox.get_sandbox_accounts).accounts
             if not accs:
@@ -283,7 +254,6 @@ class Broker:
 
     # ---------- cash helpers ----------
     def get_cash_rub(self, account_id: str) -> float:
-        """Returns available cash in self.currency (default rub)."""
         try:
             pos = self._call(self._positions_call(), account_id=account_id)
             cash = 0.0
@@ -296,7 +266,6 @@ class Broker:
             return 0.0
 
     def get_cached_cash_rub(self, account_id: str | None = None) -> float:
-        """Returns last cash from snapshot; if unknown and account_id provided, falls back to API."""
         if self.last_cash_rub > 0:
             return float(self.last_cash_rub)
         if account_id:
@@ -319,7 +288,6 @@ class Broker:
 
     # ---------- sandbox cash helpers ----------
     def ensure_sandbox_cash(self, account_id: str, min_cash_rub: float):
-        """If sandbox and cash < min_cash_rub -> top-up using sandbox_pay_in."""
         if not self.use_sandbox:
             return
 
@@ -342,18 +310,13 @@ class Broker:
 
     # ---------- account-wide snapshot (positions + orders) ----------
     def refresh_account_snapshot(self, account_id: str, figis: List[str]):
-        """
-        Pulls positions + orders once and updates state for provided figis.
-        Greatly reduces API calls vs sync_state() per figi.
-        """
         self._ensure_day_rollover()
         figi_set = set(figis)
 
-        # Positions (1 call)
+        # Positions
         try:
             pos = self._call(self._positions_call(), account_id=account_id)
 
-            # Cache available cash from the same response
             cash = 0.0
             for m in getattr(pos, "money", []) or []:
                 try:
@@ -375,14 +338,23 @@ class Broker:
                 prev_lots = int(fs.position_lots)
                 fs.position_lots = int(by_figi_lots.get(f, 0))
 
-                # Entry bookkeeping reset when position closed
+                # if position closed -> clear entry
                 if prev_lots > 0 and int(fs.position_lots) == 0:
                     fs.entry_price = None
                     fs.entry_time = None
+
+                # fallback entry (if position exists from previous run and entry unknown)
+                if int(fs.position_lots) > 0 and fs.entry_price is None:
+                    last = self.get_last_price(f)
+                    if last is not None:
+                        fs.entry_price = float(last)
+                        if fs.entry_time is None:
+                            fs.entry_time = now()
+
         except Exception as e:
             self.log(f"[WARN] get_positions failed: {e}")
 
-        # Orders (1 call)
+        # Orders
         try:
             orders = self._call(self._orders_list_call(), account_id=account_id).orders
             active_by_figi: Dict[str, str] = {}
@@ -395,15 +367,14 @@ class Broker:
                 fs = self.state.get(f)
                 fs.active_order_id = active_by_figi.get(f) or None
                 if fs.active_order_id is None:
-                    # if broker says no active order, clear local order meta too
                     self.state.clear_order(f)
                     self._reserved_rub_by_figi.pop(f, None)
+
         except Exception as e:
             self.log(f"[WARN] get_orders failed: {e}")
 
     # ---------- instruments ----------
     def resolve_instruments(self, tickers: List[str]) -> Dict[str, InstrumentInfo]:
-        """Resolve MOEX shares via share_by(TICKER, class_code) to avoid futures/derivatives."""
         out: Dict[str, InstrumentInfo] = {}
         for t in tickers:
             try:
@@ -463,11 +434,6 @@ class Broker:
         return float(math.ceil(float(price) / float(step)) * float(step))
 
     def _normalize_price(self, figi: str, price: float, side: str) -> float:
-        """
-        Normalize price to min_price_increment.
-        BUY: round UP (more likely to get filled)
-        SELL: round DOWN (more likely to get filled)
-        """
         info = self._figi_info.get(figi)
         if not info:
             return float(price)
@@ -523,11 +489,6 @@ class Broker:
 
     # ---------- portfolio status (cash + positions + pnl) ----------
     def build_portfolio_status(self, account_id: str, figis: List[str], title: str = "") -> str:
-        """
-        Human-readable portfolio snapshot for TG/log:
-          - cash/free/reserved
-          - positions: lots, entry, last, pnl abs/% (vs entry)
-        """
         self.refresh_account_snapshot(account_id, figis)
 
         cash = float(self.get_cached_cash_rub(account_id))
@@ -570,46 +531,6 @@ class Broker:
             lines.append("  (no positions)")
 
         return "\n".join(lines)
-
-    # ---------- state sync (optional / legacy) ----------
-    def sync_state(self, account_id: str, figi: str):
-        """
-        Updates:
-          - position lots for figi
-          - active order id for figi
-        """
-        self._ensure_day_rollover()
-        fs = self.state.get(figi)
-
-        prev_lots = int(fs.position_lots)
-
-        # Positions
-        try:
-            pos = self._call(self._positions_call(), account_id=account_id)
-            lots = 0
-            for sec in pos.securities:
-                if sec.figi == figi:
-                    lots = int(self._balance_to_lots(figi, getattr(sec, "balance", 0)))
-                    break
-            fs.position_lots = int(lots)
-        except Exception as e:
-            self.log(f"[WARN] get_positions failed: {e}")
-
-        # Orders
-        try:
-            orders = self._call(self._orders_list_call(), account_id=account_id).orders
-            active = [o for o in orders if o.figi == figi]
-            fs.active_order_id = active[0].order_id if active else None
-            if not fs.active_order_id:
-                self.state.clear_order(figi)
-                self._reserved_rub_by_figi.pop(figi, None)
-        except Exception as e:
-            self.log(f"[WARN] get_orders failed: {e}")
-
-        # Entry bookkeeping reset
-        if prev_lots > 0 and int(fs.position_lots) == 0:
-            fs.entry_price = None
-            fs.entry_time = None
 
     # ---------- order helpers ----------
     def _is_not_found_error(self, e: Exception) -> bool:
@@ -673,7 +594,6 @@ class Broker:
 
         price_f = self._normalize_price(figi, float(price), side="BUY")
 
-        # cash pre-check (prevents repeated "not enough balance" API rejects)
         lot_size = self._lot_size(figi)
         est_cost = float(price_f) * float(lot_size) * float(quantity_lots)
 
@@ -683,7 +603,7 @@ class Broker:
         if cash > 0 and free_cash < est_cost * 1.01:
             now_ts = time.time()
             last_warn = self._last_low_cash_warn.get(figi, 0.0)
-            if now_ts - last_warn >= 300:  # warn at most once per 5 minutes per figi
+            if now_ts - last_warn >= 300:
                 self._last_low_cash_warn[figi] = now_ts
                 msg = (
                     f"[SKIP] BUY {self.format_instrument(figi)}: not enough FREE cash "
@@ -726,7 +646,6 @@ class Broker:
             fs.order_side = "BUY"
             fs.order_placed_ts = now()
 
-            # reserve estimated cost while BUY order is active
             self._reserved_rub_by_figi[figi] = float(est_cost)
 
             inst = self.format_instrument(figi)
@@ -791,7 +710,6 @@ class Broker:
             fs.order_side = "SELL"
             fs.order_placed_ts = now()
 
-            # no need to reserve on SELL
             self._reserved_rub_by_figi.pop(figi, None)
 
             inst = self.format_instrument(figi)
@@ -825,7 +743,7 @@ class Broker:
             self.state.clear_order(figi)
             return False
 
-    # ---------- stale order handling (optional) ----------
+    # ---------- stale order handling ----------
     def expire_stale_orders(self, account_id: str, figi: str, ttl_sec: int) -> bool:
         fs = self.state.get(figi)
         if not fs.active_order_id or not fs.order_placed_ts:
@@ -901,7 +819,6 @@ class Broker:
 
         side = "BUY" if "BUY" in direction else ("SELL" if "SELL" in direction else str(fs.order_side or ""))
 
-        # partial fill
         if lots_executed > 0 and lots_requested > 0 and lots_executed < lots_requested:
             self.journal_event(
                 "PARTIAL_FILL",
@@ -936,7 +853,6 @@ class Broker:
                     reason="filled",
                 )
 
-                # Count "trades" on ENTRY fills (BUY) rather than submits.
                 if side == "BUY":
                     self.state.trades_today += 1
 
@@ -1013,7 +929,6 @@ class Broker:
                 )
                 self.notify(f"[REJECT] {self._ticker_for_figi(figi) or figi} | status={status}", throttle_sec=60)
 
-            # Clear local active order state
             self.state.clear_order(figi)
             self._reserved_rub_by_figi.pop(figi, None)
 
@@ -1037,10 +952,6 @@ class Broker:
 
     # ---------- day metric ----------
     def calc_day_cashflow(self, account_id: str) -> float:
-        """
-        Protective day metric: sum of operation payments for today in selected currency.
-        Uses sandbox operations in sandbox mode.
-        """
         try:
             tz = ZoneInfo("Europe/Moscow")
             today_local = datetime.now(tz=tz).date()
