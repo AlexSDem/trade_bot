@@ -30,23 +30,6 @@ def get_token() -> str:
     return token
 
 
-def _send_daily_report(cfg: dict, broker: Broker, notifier, report_sent_for_day: str | None) -> str | None:
-    """Returns updated report_sent_for_day."""
-    day_key = datetime.now(timezone.utc).date().isoformat()
-    if report_sent_for_day == day_key:
-        return report_sent_for_day
-
-    try:
-        df = load_trades(cfg["broker"].get("trades_csv", "logs/trades.csv"))
-        report = build_report(df, datetime.now(timezone.utc).date())
-        broker.log(report)
-        notifier.send(report, throttle_sec=0)
-        return day_key
-    except Exception as e:
-        broker.log(f"[WARN] Daily report generation failed: {e}")
-        return report_sent_for_day
-
-
 def main():
     cfg = load_config()
     token = get_token()
@@ -60,8 +43,8 @@ def main():
     error_sleep_sec = float(cfg.get("runtime", {}).get("error_sleep_sec", 10))
     heartbeat_sec = float(cfg.get("runtime", {}).get("heartbeat_sec", 300))
 
-    # NEW: TTL for limit orders (seconds)
-    order_ttl_sec = int(cfg.get("runtime", {}).get("order_ttl_sec", 300))
+    # NEW: portfolio status cadence
+    portfolio_sec = float(cfg.get("runtime", {}).get("portfolio_sec", 1800))  # 30 min by default
 
     with Client(token) as client:
         broker = Broker(client, cfg["broker"], notifier=notifier)
@@ -74,7 +57,6 @@ def main():
             throttle_sec=0,
         )
 
-        # ensure sandbox cash
         if cfg["broker"].get("use_sandbox", True):
             min_cash = float(cfg["broker"].get("min_sandbox_cash_rub", 12000))
             broker.ensure_sandbox_cash(account_id, min_cash_rub=min_cash)
@@ -86,7 +68,16 @@ def main():
             broker.log("[ERROR] Нет подходящих инструментов под max_lot_cost_rub. Увеличь лимит или измени tickers.")
             return
 
+        # NEW: portfolio status on start
+        try:
+            txt = broker.build_portfolio_status(account_id, figis, title="Portfolio snapshot (start)")
+            broker.log(txt)
+            notifier.send(txt, throttle_sec=0)
+        except Exception as e:
+            broker.log(f"[WARN] Portfolio snapshot failed (start): {e}")
+
         last_hb = 0.0
+        last_portfolio_push = 0.0
         consecutive_errors = 0
         report_sent_for_day: str | None = None
 
@@ -99,11 +90,41 @@ def main():
                     broker.log(f"[HB] alive | utc={ts.isoformat()}")
                     last_hb = time.time()
 
-                # Outside trading window: only flatten + daily report once
+                # Portfolio snapshot every N seconds (default 30m)
+                if time.time() - last_portfolio_push >= portfolio_sec:
+                    try:
+                        txt = broker.build_portfolio_status(account_id, figis, title="Portfolio snapshot")
+                        broker.log(txt)
+                        notifier.send(txt, throttle_sec=0)
+                    except Exception as e:
+                        broker.log(f"[WARN] Portfolio snapshot failed: {e}")
+                    last_portfolio_push = time.time()
+
+                # Outside trading window
                 if not broker.is_trading_time(ts, cfg["schedule"]):
                     broker.flatten_if_needed(account_id, cfg["schedule"])
+
+                    # End of day report + end portfolio
                     if broker.flatten_due(ts, cfg["schedule"]):
-                        report_sent_for_day = _send_daily_report(cfg, broker, notifier, report_sent_for_day)
+                        day_key = datetime.now(timezone.utc).date().isoformat()
+                        if report_sent_for_day != day_key:
+                            try:
+                                df = load_trades(cfg["broker"].get("trades_csv", "logs/trades.csv"))
+                                report = build_report(df, datetime.now(timezone.utc).date())
+                                broker.log(report)
+                                notifier.send(report, throttle_sec=0)
+
+                                # NEW: end-day portfolio snapshot
+                                try:
+                                    txt = broker.build_portfolio_status(account_id, figis, title="Portfolio snapshot (end)")
+                                    broker.log(txt)
+                                    notifier.send(txt, throttle_sec=0)
+                                except Exception as e:
+                                    broker.log(f"[WARN] Portfolio snapshot failed (end): {e}")
+
+                                report_sent_for_day = day_key
+                            except Exception as e:
+                                broker.log(f"[WARN] Daily report generation failed: {e}")
 
                     time.sleep(min(10, sleep_sec))
                     continue
@@ -111,7 +132,27 @@ def main():
                 # Flatten time
                 if broker.flatten_due(ts, cfg["schedule"]):
                     broker.flatten_if_needed(account_id, cfg["schedule"])
-                    report_sent_for_day = _send_daily_report(cfg, broker, notifier, report_sent_for_day)
+
+                    day_key = datetime.now(timezone.utc).date().isoformat()
+                    if report_sent_for_day != day_key:
+                        try:
+                            df = load_trades(cfg["broker"].get("trades_csv", "logs/trades.csv"))
+                            report = build_report(df, datetime.now(timezone.utc).date())
+                            broker.log(report)
+                            notifier.send(report, throttle_sec=0)
+
+                            # NEW: end-day portfolio snapshot
+                            try:
+                                txt = broker.build_portfolio_status(account_id, figis, title="Portfolio snapshot (end)")
+                                broker.log(txt)
+                                notifier.send(txt, throttle_sec=0)
+                            except Exception as e:
+                                broker.log(f"[WARN] Portfolio snapshot failed (end): {e}")
+
+                            report_sent_for_day = day_key
+                        except Exception as e:
+                            broker.log(f"[WARN] Daily report generation failed: {e}")
+
                     time.sleep(min(10, sleep_sec))
                     continue
 
@@ -122,44 +163,39 @@ def main():
 
                 entries_allowed = broker.new_entries_allowed(ts, cfg["schedule"])
 
-                # 1x per loop: account snapshot (positions + orders)
+                # 1x per loop: account snapshot
                 broker.refresh_account_snapshot(account_id, figis)
 
                 for figi in figis:
-                    # 1) order state updates
+                    # order status updates
                     broker.poll_order_updates(account_id, figi)
 
-                    # 2) expire stale orders (TTL) to avoid "stuck all day" behavior
-                    # if expired -> skip signals this loop for this figi
-                    if order_ttl_sec > 0:
-                        expired = broker.expire_stale_orders(account_id, figi, ttl_sec=order_ttl_sec)
-                        if expired:
-                            continue
-
-                    # 3) candles
+                    # candles
                     candles = broker.get_last_candles_1m(figi, lookback_minutes=cfg["strategy"]["lookback_minutes"])
                     if candles is None or len(candles) < 30:
                         continue
 
-                    # 4) signal
+                    # signal
                     signal = strategy.make_signal(figi, candles, broker.state)
                     action = signal.get("action", "HOLD")
 
-                    # pick price for logging and limit placement
-                    last_price = signal.get("price")
-                    limit_price = signal.get("limit_price", last_price)  # NEW: strategy can suggest limit_price
-                    reason = signal.get("reason", "")
-
                     # journal signals
                     if action in ("BUY", "SELL"):
+                        price = signal.get("price")
+                        limit_price = signal.get("limit_price", price)
+                        reason = signal.get("reason", "")
                         inst = broker.format_instrument(figi)
-                        cash = broker.get_cached_cash_rub(account_id)
-                        free_cash = broker.get_free_cash_rub_estimate(account_id)
 
-                        lp_txt = f" limit={float(limit_price):.4f}" if limit_price is not None else ""
+                        cash = broker.get_cached_cash_rub(account_id)
+                        # if you have free-cash helper in broker, nice to show it:
+                        try:
+                            free = broker.get_free_cash_rub_estimate(account_id)
+                        except Exception:
+                            free = cash
+
                         broker.log(
-                            f"[SIGNAL] {action} {inst} last={last_price}{lp_txt} "
-                            f"| cash≈{cash:.2f} free≈{free_cash:.2f} {cfg['broker'].get('currency','rub').upper()} | {reason}"
+                            f"[SIGNAL] {action} {inst} last={price} limit={float(limit_price):.4f} "
+                            f"| cash≈{cash:.2f} free≈{free:.2f} RUB | {reason}"
                         )
 
                         broker.journal_event(
@@ -167,29 +203,23 @@ def main():
                             figi,
                             side=action,
                             lots=1,
-                            price=float(last_price) if last_price is not None else None,
+                            price=price,
                             reason=reason,
                             meta={"limit_price": float(limit_price) if limit_price is not None else None},
                         )
 
-                    # 5) execution
+                    # execute
                     if action == "BUY":
                         if not entries_allowed:
                             continue
                         if not risk.allow_new_trade(broker.state, account_id, figi):
                             continue
-
-                        # NEW: place buy using limit_price (recommended) instead of last
-                        if limit_price is None:
-                            continue
-                        broker.place_limit_buy(account_id, figi, float(limit_price))
+                        broker.place_limit_buy(account_id, figi, signal.get("limit_price", signal["price"]))
 
                     elif action == "SELL":
-                        if limit_price is None:
-                            continue
-                        broker.place_limit_sell_to_close(account_id, figi, float(limit_price))
+                        broker.place_limit_sell_to_close(account_id, figi, signal.get("limit_price", signal["price"]))
 
-                # day safety metric
+                # day protector
                 day_metric = broker.calc_day_cashflow(account_id)
                 risk.update_day_pnl(day_metric)
 
