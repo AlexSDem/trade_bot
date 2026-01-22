@@ -42,9 +42,10 @@ def main():
     sleep_sec = float(cfg.get("runtime", {}).get("sleep_sec", 55))
     error_sleep_sec = float(cfg.get("runtime", {}).get("error_sleep_sec", 10))
     heartbeat_sec = float(cfg.get("runtime", {}).get("heartbeat_sec", 300))
-
     portfolio_sec = float(cfg.get("runtime", {}).get("portfolio_sec", 1800))  # 30 min default
-    order_ttl_sec = int(cfg.get("runtime", {}).get("order_ttl_sec", 300))      # 5 min default
+
+    # NEW: order TTL seconds (cancel if not filled)
+    order_ttl_sec = int(cfg.get("runtime", {}).get("order_ttl_sec", 120))  # 2 minutes default
 
     with Client(token) as client:
         broker = Broker(client, cfg["broker"], notifier=notifier)
@@ -57,6 +58,7 @@ def main():
             throttle_sec=0,
         )
 
+        # ensure sandbox cash
         if cfg["broker"].get("use_sandbox", True):
             min_cash = float(cfg["broker"].get("min_sandbox_cash_rub", 12000))
             broker.ensure_sandbox_cash(account_id, min_cash_rub=min_cash)
@@ -68,7 +70,7 @@ def main():
             broker.log("[ERROR] Нет подходящих инструментов под max_lot_cost_rub. Увеличь лимит или измени tickers.")
             return
 
-        # Start snapshot
+        # portfolio snapshot on start
         try:
             txt = broker.build_portfolio_status(account_id, figis, title="Portfolio snapshot (start)")
             broker.log(txt)
@@ -161,35 +163,26 @@ def main():
 
                 entries_allowed = broker.new_entries_allowed(ts, cfg["schedule"])
 
-                # 1x per loop: positions+orders snapshot (IMPORTANT: do not lose active_order_id here)
+                # Snapshot once per loop
                 broker.refresh_account_snapshot(account_id, figis)
 
                 for figi in figis:
-                    # 0) expire stale orders (frees slots and avoids "stuck forever")
-                    if order_ttl_sec > 0:
-                        broker.expire_stale_orders(account_id, figi, ttl_sec=order_ttl_sec)
+                    # 0) expire stale orders first (free slots, keep bot "simple flow")
+                    broker.expire_stale_orders(account_id, figi, ttl_sec=order_ttl_sec)
 
-                    # 1) poll updates (FILL/CANCEL/REJECT must be recorded)
+                    # 1) order status updates
                     broker.poll_order_updates(account_id, figi)
 
-                    # 2) candles
+                    # candles
                     candles = broker.get_last_candles_1m(figi, lookback_minutes=cfg["strategy"]["lookback_minutes"])
                     if candles is None or len(candles) < 30:
                         continue
 
-                    # IMPORTANT: use real last price for stops/takes (not stale candle close)
-                    last_px = broker.get_last_price(figi)
-                    if last_px is not None and len(candles) > 0:
-                        try:
-                            candles.loc[candles.index[-1], "close"] = float(last_px)
-                        except Exception:
-                            pass
-
-                    # 3) signal
+                    # signal
                     signal = strategy.make_signal(figi, candles, broker.state)
                     action = signal.get("action", "HOLD")
 
-                    # log signals
+                    # journal signals
                     if action in ("BUY", "SELL"):
                         price = signal.get("price")
                         limit_price = signal.get("limit_price", price)
@@ -217,7 +210,7 @@ def main():
                             meta={"limit_price": float(limit_price) if limit_price is not None else None},
                         )
 
-                    # 4) execute
+                    # execute (simple loop: signal -> order now)
                     if action == "BUY":
                         if not entries_allowed:
                             continue
