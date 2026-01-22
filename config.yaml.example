@@ -43,15 +43,16 @@ risk:
   max_trades_per_day: 3
 
   # Main portfolio constraint
-  max_positions: 1
+  max_positions: 5
 
   # Per-figi constraint (legacy)
   max_active_orders_per_figi: 1
 
   # NEW: portfolio-level constraints for pending orders
   # Conservative default: same as max_positions
-  max_pending_buys_total: 1
-  max_active_orders_total: 1
+  max_pending_buys_total: 5
+  max_active_orders_total: 5
+
 
 runtime:
   sleep_sec: 55
