@@ -1,55 +1,101 @@
-[INFO] Account: 03e0156b-0554-4ea6-ab78-9aea6d687934 (sandbox=True)
-[INFO] Sandbox cash OK: 21696.13 rub
-[OK] SBER BBG004730N88 lot=1 lot_cost≈306.22
-[OK] GAZP BBG004730RP0 lot=10 lot_cost≈1264.30
-[SKIP] LKOH lot_cost≈5403.50 > 3500.00
-[OK] GMKN BBG004731489 lot=10 lot_cost≈1609.40
-[OK] TATN BBG004RVFFC0 lot=1 lot_cost≈565.70
-[OK] NVTK BBG00475KKY8 lot=1 lot_cost≈1238.60
-[OK] ROSN BBG004731354 lot=1 lot_cost≈398.35
-[OK] ALRS BBG004S68B31 lot=10 lot_cost≈424.40
-[INFO] Tradeable FIGIs: ['BBG004730N88', 'BBG004730RP0', 'BBG004731489', 'BBG004RVFFC0', 'BBG00475KKY8', 'BBG004731354', 'BBG004S68B31']
-[HB] alive | utc=2026-01-22T07:12:49.922482+00:00
-[HB] alive | utc=2026-01-22T07:17:49.956056+00:00
-[HB] alive | utc=2026-01-22T07:22:56.287494+00:00
-[HB] alive | utc=2026-01-22T07:28:28.793753+00:00
-[HB] alive | utc=2026-01-22T07:34:01.340119+00:00
-[HB] alive | utc=2026-01-22T07:39:33.967653+00:00
-[HB] alive | utc=2026-01-22T07:45:06.439995+00:00
-[HB] alive | utc=2026-01-22T07:50:38.934323+00:00
-[HB] alive | utc=2026-01-22T07:56:11.511008+00:00
-[HB] alive | utc=2026-01-22T08:01:44.028884+00:00
-[SIGNAL] SELL SBER (BBG004730N88) last=306.45 limit=306.4500 | cash≈21696.13 free≈21696.13 RUB | safe_exit_after_time last>=306.3531 age=0 days 00:45:00
-[ORDER] SELL SBER (BBG004730N88) qty=1 price=306.45 | cash≈21696.13 RUB (client_uid=6000618b-1415-46a4-9507-d2bbbcab46aa)
-[SIGNAL] SELL TATN (BBG004RVFFC0) last=567.7 limit=567.7000 | cash≈21696.13 free≈21696.13 RUB | safe_exit_after_time last>=565.6827 age=0 days 00:45:00
-[ORDER] SELL TATN (BBG004RVFFC0) qty=1 price=567.7 | cash≈21696.13 RUB (client_uid=55d13155-e7ef-44cc-b698-fdb2df67f7ac)
-[SIGNAL] SELL ROSN (BBG004731354) last=400.7 limit=400.7000 | cash≈22569.84 free≈22569.84 RUB | safe_exit_after_time last>=400.6502 age=0 days 00:46:00
-[ORDER] SELL ROSN (BBG004731354) qty=1 price=400.65000000000003 | cash≈22569.84 RUB (client_uid=3b5f5f9d-7570-4ade-ac57-4695f178eecb)
-[HB] alive | utc=2026-01-22T08:07:17.442143+00:00
-[HB] alive | utc=2026-01-22T08:12:50.070116+00:00
-[HB] alive | utc=2026-01-22T08:18:22.651499+00:00
-[HB] alive | utc=2026-01-22T08:23:55.173223+00:00
-[SIGNAL] SELL GMKN (BBG004731489) last=161.22 limit=161.2200 | cash≈22970.29 free≈22970.29 RUB | safe_exit_after_time last>=161.1731 age=0 days 01:05:00
-196ffcc1da99d5bdf950909c9c6b8c1a PostSandboxOrder INVALID_ARGUMENT 30034
-[WARN] API error (attempt 1/3): (<StatusCode.INVALID_ARGUMENT: (3, 'invalid argument')>, '30034', Metadata(tracking_id='196ffcc1da99d5bdf950909c9c6b8c1a', ratelimit_limit='200, 200;w=60', ratelimit_remaining=197, ratelimit_reset=14, message='Not enough balance'))
-5f91a653ba33129fff9bacf256340427 PostSandboxOrder INVALID_ARGUMENT 30034
-[WARN] API error (attempt 2/3): (<StatusCode.INVALID_ARGUMENT: (3, 'invalid argument')>, '30034', Metadata(tracking_id='5f91a653ba33129fff9bacf256340427', ratelimit_limit='200, 200;w=60', ratelimit_remaining=196, ratelimit_reset=13, message='Not enough balance'))
-aeb7dbf1e692087034e0363aa1763c84 PostSandboxOrder INVALID_ARGUMENT 30034
-[WARN] API error (attempt 3/3): (<StatusCode.INVALID_ARGUMENT: (3, 'invalid argument')>, '30034', Metadata(tracking_id='aeb7dbf1e692087034e0363aa1763c84', ratelimit_limit='200, 200;w=60', ratelimit_remaining=195, ratelimit_reset=11, message='Not enough balance'))
-[WARN] post_order SELL failed: (<StatusCode.INVALID_ARGUMENT: (3, 'invalid argument')>, '30034', Metadata(tracking_id='aeb7dbf1e692087034e0363aa1763c84', ratelimit_limit='200, 200;w=60', ratelimit_remaining=195, ratelimit_reset=11, message='Not enough balance'))
-[SIGNAL] SELL GMKN (BBG004731489) last=161.22 limit=161.2200 | cash≈22970.29 free≈22970.29 RUB | safe_exit_after_time last>=161.1709 age=0 days 01:06:00
-2be2f0bb3963b3677dc1dff772a96c7c PostSandboxOrder INVALID_ARGUMENT 30034
-[WARN] API error (attempt 1/3): (<StatusCode.INVALID_ARGUMENT: (3, 'invalid argument')>, '30034', Metadata(tracking_id='2be2f0bb3963b3677dc1dff772a96c7c', ratelimit_limit='200, 200;w=60', ratelimit_remaining=197, ratelimit_reset=16, message='Not enough balance'))
-82037f4e087c80ad635211e3166c9463 PostSandboxOrder INVALID_ARGUMENT 30034
-[WARN] API error (attempt 2/3): (<StatusCode.INVALID_ARGUMENT: (3, 'invalid argument')>, '30034', Metadata(tracking_id='82037f4e087c80ad635211e3166c9463', ratelimit_limit='200, 200;w=60', ratelimit_remaining=196, ratelimit_reset=15, message='Not enough balance'))
-a9b4e53711c5202cb364be57f86abadf PostSandboxOrder INVALID_ARGUMENT 30034
-[WARN] API error (attempt 3/3): (<StatusCode.INVALID_ARGUMENT: (3, 'invalid argument')>, '30034', Metadata(tracking_id='a9b4e53711c5202cb364be57f86abadf', ratelimit_limit='200, 200;w=60', ratelimit_remaining=195, ratelimit_reset=13, message='Not enough balance'))
-[WARN] post_order SELL failed: (<StatusCode.INVALID_ARGUMENT: (3, 'invalid argument')>, '30034', Metadata(tracking_id='a9b4e53711c5202cb364be57f86abadf', ratelimit_limit='200, 200;w=60', ratelimit_remaining=195, ratelimit_reset=13, message='Not enough balance'))
-[SIGNAL] SELL GMKN (BBG004731489) last=161.3 limit=161.3000 | cash≈22970.29 free≈22970.29 RUB | safe_exit_after_time last>=161.1714 age=0 days 01:07:00
-77df21d6f647f6eac8a6a4bacd52d0b7 PostSandboxOrder INVALID_ARGUMENT 30034
-[WARN] API error (attempt 1/3): (<StatusCode.INVALID_ARGUMENT: (3, 'invalid argument')>, '30034', Metadata(tracking_id='77df21d6f647f6eac8a6a4bacd52d0b7', ratelimit_limit='200, 200;w=60', ratelimit_remaining=197, ratelimit_reset=17, message='Not enough balance'))
-8e0f8b3437ef93494d6df876b2049b06 PostSandboxOrder INVALID_ARGUMENT 30034
-[WARN] API error (attempt 2/3): (<StatusCode.INVALID_ARGUMENT: (3, 'invalid argument')>, '30034', Metadata(tracking_id='8e0f8b3437ef93494d6df876b2049b06', ratelimit_limit='200, 200;w=60', ratelimit_remaining=196, ratelimit_reset=16, message='Not enough balance'))
-56debeb0d63909530aae3b65e9a1386b PostSandboxOrder INVALID_ARGUMENT 30034
-[WARN] API error (attempt 3/3): (<StatusCode.INVALID_ARGUMENT: (3, 'invalid argument')>, '30034', Metadata(tracking_id='56debeb0d63909530aae3b65e9a1386b', ratelimit_limit='200, 200;w=60', ratelimit_remaining=195, ratelimit_reset=14, message='Not enough balance'))
-[WARN] post_order SELL failed: (<StatusCode.INVALID_ARGUMENT: (3, 'invalid argument')>, '30034', Metadata(tracking_id='56debeb0d63909530aae3b65e9a1386b', ratelimit_limit='200, 200;w=60', ratelimit_remaining=195, ratelimit_reset=14, message='Not enough balance'))
+        # internal reserved money estimate for pending BUY orders
+        self._reserved_rub_by_figi: Dict[str, float] = {}
+
+
+
+
+    def build_portfolio_status(self, account_id: str, figis: List[str], title: str = "") -> str:
+        """
+        Human-readable portfolio snapshot for TG/log:
+          - cash/free/reserved
+          - positions: lots, entry, last, pnl abs/% (vs entry)
+        """
+        # refresh snapshot first (positions+orders, and last_cash_rub)
+        self.refresh_account_snapshot(account_id, figis)
+
+        cash = float(self.get_cached_cash_rub(account_id))
+        reserved = float(sum(self._reserved_rub_by_figi.values())) if hasattr(self, "_reserved_rub_by_figi") else 0.0
+        free = float(max(0.0, cash - reserved))
+
+        lines = []
+        if title:
+            lines.append(title)
+        lines.append("------------------------------------------------------------")
+        lines.append(f"Cash: {cash:,.2f} RUB | Free≈{free:,.2f} | Reserved≈{reserved:,.2f}")
+        lines.append("Positions:")
+
+        any_pos = False
+        for figi in figis:
+            fs = self.state.get(figi)
+            lots = int(fs.position_lots)
+            if lots <= 0:
+                continue
+            any_pos = True
+
+            lot_size = 1
+            info = self._figi_info.get(figi)
+            if info:
+                lot_size = int(info.lot) if int(info.lot) > 0 else 1
+
+            last = self.get_last_price(figi)
+            ticker = self._ticker_for_figi(figi) or figi
+
+            entry = fs.entry_price
+            if entry is None or last is None:
+                lines.append(f"  {ticker:<5} lots={lots:<3} entry=N/A last={last if last is not None else 'N/A'}")
+                continue
+
+            pnl_abs = (float(last) - float(entry)) * float(lot_size) * float(lots)
+            pnl_pct = (float(last) / float(entry) - 1.0) * 100.0
+
+            lines.append(
+                f"  {ticker:<5} lots={lots:<3} entry={float(entry):.4f} last={float(last):.4f} "
+                f"PnL={pnl_abs:+.2f} RUB ({pnl_pct:+.2f}%)"
+            )
+
+        if not any_pos:
+            lines.append("  (no positions)")
+
+        return "\n".join(lines)
+
+
+
+
+
+
+                elif side == "SELL":
+                    # Realized PnL vs stored entry_price
+                    try:
+                        entry = fs.entry_price
+                        if entry is not None and avg_price is not None:
+                            info = self._figi_info.get(figi)
+                            lot_size = int(info.lot) if info and int(info.lot) > 0 else 1
+
+                            qty_lots = float(lots_executed)
+                            pnl_abs = (float(avg_price) - float(entry)) * float(lot_size) * qty_lots
+                            pnl_pct = (float(avg_price) / float(entry) - 1.0) * 100.0
+
+                            self.notify(
+                                f"[PNL] {self._ticker_for_figi(figi) or figi} "
+                                f"{pnl_abs:+.2f} RUB ({pnl_pct:+.2f}%) | entry={float(entry):.4f} exit={float(avg_price):.4f}",
+                                throttle_sec=0,
+                            )
+
+                            # optional: also journal it
+                            self.journal_event(
+                                "REALIZED_PNL",
+                                figi,
+                                side="SELL",
+                                lots=int(lots_executed),
+                                price=float(avg_price),
+                                order_id=oid,
+                                client_uid=cuid,
+                                status="REALIZED",
+                                reason="sell_fill_pnl",
+                                meta={"entry": float(entry), "pnl_abs": float(pnl_abs), "pnl_pct": float(pnl_pct)},
+                            )
+                    except Exception:
+                        pass
+
+                    fs.entry_price = None
+                    fs.entry_time = None
