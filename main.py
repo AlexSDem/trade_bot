@@ -43,8 +43,8 @@ def main():
     error_sleep_sec = float(cfg.get("runtime", {}).get("error_sleep_sec", 10))
     heartbeat_sec = float(cfg.get("runtime", {}).get("heartbeat_sec", 300))
 
-    # NEW: portfolio status cadence
     portfolio_sec = float(cfg.get("runtime", {}).get("portfolio_sec", 1800))  # 30 min by default
+    order_ttl_sec = int(cfg.get("runtime", {}).get("order_ttl_sec", 0))  # 0 = disabled
 
     with Client(token) as client:
         broker = Broker(client, cfg["broker"], notifier=notifier)
@@ -68,7 +68,7 @@ def main():
             broker.log("[ERROR] Нет подходящих инструментов под max_lot_cost_rub. Увеличь лимит или измени tickers.")
             return
 
-        # NEW: portfolio status on start
+        # Portfolio status on start
         try:
             txt = broker.build_portfolio_status(account_id, figis, title="Portfolio snapshot (start)")
             broker.log(txt)
@@ -114,9 +114,10 @@ def main():
                                 broker.log(report)
                                 notifier.send(report, throttle_sec=0)
 
-                                # NEW: end-day portfolio snapshot
                                 try:
-                                    txt = broker.build_portfolio_status(account_id, figis, title="Portfolio snapshot (end)")
+                                    txt = broker.build_portfolio_status(
+                                        account_id, figis, title="Portfolio snapshot (end)"
+                                    )
                                     broker.log(txt)
                                     notifier.send(txt, throttle_sec=0)
                                 except Exception as e:
@@ -141,9 +142,10 @@ def main():
                             broker.log(report)
                             notifier.send(report, throttle_sec=0)
 
-                            # NEW: end-day portfolio snapshot
                             try:
-                                txt = broker.build_portfolio_status(account_id, figis, title="Portfolio snapshot (end)")
+                                txt = broker.build_portfolio_status(
+                                    account_id, figis, title="Portfolio snapshot (end)"
+                                )
                                 broker.log(txt)
                                 notifier.send(txt, throttle_sec=0)
                             except Exception as e:
@@ -167,6 +169,13 @@ def main():
                 broker.refresh_account_snapshot(account_id, figis)
 
                 for figi in figis:
+                    # (optional) cancel stale orders to free slots
+                    if order_ttl_sec and order_ttl_sec > 0:
+                        try:
+                            broker.expire_stale_orders(account_id, figi, ttl_sec=order_ttl_sec)
+                        except Exception:
+                            pass
+
                     # order status updates
                     broker.poll_order_updates(account_id, figi)
 
@@ -187,7 +196,6 @@ def main():
                         inst = broker.format_instrument(figi)
 
                         cash = broker.get_cached_cash_rub(account_id)
-                        # if you have free-cash helper in broker, nice to show it:
                         try:
                             free = broker.get_free_cash_rub_estimate(account_id)
                         except Exception:
@@ -212,8 +220,12 @@ def main():
                     if action == "BUY":
                         if not entries_allowed:
                             continue
-                        if not risk.allow_new_trade(broker.state, account_id, figi):
+
+                        ok, why = risk.allow_new_trade_reason(broker.state, account_id, figi)
+                        if not ok:
+                            broker.log(f"[RISK] BLOCK BUY {broker.format_instrument(figi)} reason={why}")
                             continue
+
                         broker.place_limit_buy(account_id, figi, signal.get("limit_price", signal["price"]))
 
                     elif action == "SELL":
