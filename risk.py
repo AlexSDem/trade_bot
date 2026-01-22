@@ -7,8 +7,7 @@ class RiskManager:
         # per-figi constraint (legacy)
         self.max_active_orders_per_figi = int(cfg.get("max_active_orders_per_figi", 1))
 
-        # NEW: portfolio-level limits on pending orders
-        # If not specified -> behave conservatively like max_positions
+        # portfolio-level limits on pending orders / active orders
         self.max_pending_buys_total = int(cfg.get("max_pending_buys_total", self.max_positions))
         self.max_active_orders_total = int(cfg.get("max_active_orders_total", self.max_positions))
 
@@ -16,10 +15,6 @@ class RiskManager:
         self._locked = False
 
     def update_day_pnl(self, day_metric_rub: float):
-        """
-        В main.py сюда приходит защитный day metric (cashflow/PnL proxy).
-        Если он ушёл ниже -max_day_loss_rub -> блокируем торговлю до завтра.
-        """
         self._day_metric = float(day_metric_rub)
         if self._day_metric <= -float(self.max_day_loss_rub):
             self._locked = True
@@ -53,41 +48,46 @@ class RiskManager:
         return cnt
 
     def allow_new_trade(self, state, account_id: str, figi: str) -> bool:
+        ok, _ = self.allow_new_trade_reason(state, account_id, figi)
+        return ok
+
+    def allow_new_trade_reason(self, state, account_id: str, figi: str):
         """
         Проверки именно на ОТКРЫТИЕ новой позиции (BUY).
+        Возвращает (ok: bool, reason: str)
         """
         # 1) дневной лок
         if self._locked:
-            return False
+            return False, "day_locked"
 
         # 2) лимит сделок в день
-        if int(getattr(state, "trades_today", 0) or 0) >= int(self.max_trades_per_day):
-            return False
+        trades_today = int(getattr(state, "trades_today", 0) or 0)
+        if trades_today >= int(self.max_trades_per_day):
+            return False, f"max_trades_per_day (trades_today={trades_today} limit={self.max_trades_per_day})"
 
         # 3) уже есть позиция по этому figi
         if state.has_open_position(figi):
-            return False
+            return False, "already_in_position"
 
         fs = state.figi.get(figi)
 
         # 4) если у figi уже висит активная заявка — не ставим новую (если запрещено)
         if fs and getattr(fs, "active_order_id", None) and int(self.max_active_orders_per_figi) <= 1:
-            return False
+            return False, "active_order_exists_for_figi"
 
         # 5) портфельные ограничения: позиции + pending BUY считаем как "занятые слоты"
         open_positions = self._count_open_positions(state)
         pending_buys = self._count_pending_buys(state)
         if (open_positions + pending_buys) >= int(self.max_positions):
-            return False
+            return False, f"max_positions (open={open_positions} pending={pending_buys} limit={self.max_positions})"
 
-        # 6) общий лимит pending BUY (на случай, если хочешь max_positions=3,
-        # но pending BUY ограничить 1-2)
+        # 6) общий лимит pending BUY
         if pending_buys >= int(self.max_pending_buys_total):
-            return False
+            return False, f"max_pending_buys_total (pending={pending_buys} limit={self.max_pending_buys_total})"
 
-        # 7) общий лимит активных ордеров любого типа (защита от спама)
+        # 7) общий лимит активных ордеров любого типа
         active_orders = self._count_active_orders(state)
         if active_orders >= int(self.max_active_orders_total):
-            return False
+            return False, f"max_active_orders_total (active={active_orders} limit={self.max_active_orders_total})"
 
-        return True
+        return True, "ok"
