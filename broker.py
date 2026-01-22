@@ -310,68 +310,79 @@ class Broker:
 
     # ---------- account-wide snapshot (positions + orders) ----------
     def refresh_account_snapshot(self, account_id: str, figis: List[str]):
-        self._ensure_day_rollover()
-        figi_set = set(figis)
+    """
+    Pulls positions + orders once and updates state for provided figis.
 
-        # Positions
-        try:
-            pos = self._call(self._positions_call(), account_id=account_id)
+    IMPORTANT:
+      - do NOT clear fs.active_order_id just because the order disappeared from active orders list
+        (it may have been FILLED). Let poll_order_updates() fetch final state via get_order_state().
+    """
+    self._ensure_day_rollover()
+    figi_set = set(figis)
 
-            cash = 0.0
-            for m in getattr(pos, "money", []) or []:
-                try:
-                    if getattr(m, "currency", None) == self.currency:
-                        cash += float(self._to_float(m))
-                except Exception:
-                    pass
-            self.last_cash_rub = float(cash)
+    # -------- Positions (1 call)
+    try:
+        pos = self._call(self._positions_call(), account_id=account_id)
 
-            by_figi_lots: Dict[str, int] = {f: 0 for f in figi_set}
-            for sec in getattr(pos, "securities", []) or []:
-                f = getattr(sec, "figi", "")
-                if f in figi_set:
-                    bal = getattr(sec, "balance", 0)
-                    by_figi_lots[f] = int(self._balance_to_lots(f, bal))
+        # cache cash
+        cash = 0.0
+        for m in getattr(pos, "money", []) or []:
+            try:
+                if getattr(m, "currency", None) == self.currency:
+                    cash += float(self._to_float(m))
+            except Exception:
+                pass
+        self.last_cash_rub = float(cash)
 
-            for f in figi_set:
-                fs = self.state.get(f)
-                prev_lots = int(fs.position_lots)
-                fs.position_lots = int(by_figi_lots.get(f, 0))
+        by_figi_lots: Dict[str, int] = {f: 0 for f in figi_set}
+        for sec in getattr(pos, "securities", []) or []:
+            f = getattr(sec, "figi", "")
+            if f in figi_set:
+                bal = getattr(sec, "balance", 0)
+                by_figi_lots[f] = int(self._balance_to_lots(f, bal))
 
-                # if position closed -> clear entry
-                if prev_lots > 0 and int(fs.position_lots) == 0:
-                    fs.entry_price = None
-                    fs.entry_time = None
+        for f in figi_set:
+            fs = self.state.get(f)
+            prev_lots = int(fs.position_lots)
+            fs.position_lots = int(by_figi_lots.get(f, 0))
 
-                # fallback entry (if position exists from previous run and entry unknown)
-                if int(fs.position_lots) > 0 and fs.entry_price is None:
-                    last = self.get_last_price(f)
-                    if last is not None:
-                        fs.entry_price = float(last)
-                        if fs.entry_time is None:
-                            fs.entry_time = now()
+            # if position closed -> clear entry bookkeeping
+            if prev_lots > 0 and int(fs.position_lots) == 0:
+                fs.entry_price = None
+                fs.entry_time = None
 
-        except Exception as e:
-            self.log(f"[WARN] get_positions failed: {e}")
+    except Exception as e:
+        self.log(f"[WARN] get_positions failed: {e}")
 
-        # Orders
-        try:
-            orders = self._call(self._orders_list_call(), account_id=account_id).orders
-            active_by_figi: Dict[str, str] = {}
-            for o in orders:
-                f = getattr(o, "figi", "")
-                if f in figi_set and f not in active_by_figi:
-                    active_by_figi[f] = getattr(o, "order_id", "")
+    # -------- Orders (1 call)
+    try:
+        orders = self._call(self._orders_list_call(), account_id=account_id).orders
 
-            for f in figi_set:
-                fs = self.state.get(f)
-                fs.active_order_id = active_by_figi.get(f) or None
-                if fs.active_order_id is None:
+        # active orders by figi (first one is enough for our bot)
+        active_by_figi: Dict[str, str] = {}
+        for o in orders:
+            f = getattr(o, "figi", "")
+            if f in figi_set and f not in active_by_figi:
+                active_by_figi[f] = getattr(o, "order_id", "")
+
+        for f in figi_set:
+            fs = self.state.get(f)
+
+            if f in active_by_figi and active_by_figi[f]:
+                # broker reports an active order -> trust it
+                fs.active_order_id = active_by_figi[f]
+
+            else:
+                # broker reports NO active order for this figi
+                # IMPORTANT: if we have a local active_order_id, keep it and let poll_order_updates()
+                # determine if it was FILLED/CANCELLED/REJECTED.
+                if not fs.active_order_id:
+                    # no local order -> ok to clear meta
                     self.state.clear_order(f)
                     self._reserved_rub_by_figi.pop(f, None)
 
-        except Exception as e:
-            self.log(f"[WARN] get_orders failed: {e}")
+    except Exception as e:
+        self.log(f"[WARN] get_orders failed: {e}")
 
     # ---------- instruments ----------
     def resolve_instruments(self, tickers: List[str]) -> Dict[str, InstrumentInfo]:
