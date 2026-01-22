@@ -7,12 +7,15 @@ from typing import Optional, Dict
 class FigiState:
     active_order_id: Optional[str] = None       # биржевой order_id (ответ API)
     client_order_uid: Optional[str] = None      # наш idempotency key
-    order_side: Optional[str] = None            # "BUY"/"SELL"
-    order_placed_ts: Optional[datetime] = None  # when we placed active order
 
+    # NEW: чтобы понимать что за ордер висит и когда поставили (TTL)
+    order_side: Optional[str] = None            # "BUY" / "SELL"
+    order_placed_ts: Optional[datetime] = None  # when order was placed (UTC)
+
+    # position_lots хранится в ЛОТАХ (не в штуках)
     position_lots: int = 0
 
-    # Для стратегии (тейк/стоп/режим после time_stop)
+    # Для стратегии (тейк/стоп и т.п.)
     entry_price: Optional[float] = None
     entry_time: Optional[datetime] = None
 
@@ -30,20 +33,21 @@ class BotState:
 
     def has_open_position(self, figi: str) -> bool:
         fs = self.figi.get(figi)
-        return bool(fs and fs.position_lots > 0)
+        return bool(fs and int(fs.position_lots) > 0)
 
     def has_active_order(self, figi: str) -> bool:
         fs = self.figi.get(figi)
         return bool(fs and fs.active_order_id)
 
     def open_positions_count(self) -> int:
-        return sum(1 for fs in self.figi.values() if fs.position_lots > 0)
+        return sum(1 for fs in self.figi.values() if int(fs.position_lots) > 0)
 
     def clear_entry(self, figi: str):
         fs = self.get(figi)
         fs.entry_price = None
         fs.entry_time = None
 
+    # NEW: clearing order meta in one place
     def clear_order(self, figi: str):
         fs = self.get(figi)
         fs.active_order_id = None
@@ -54,6 +58,7 @@ class BotState:
     def reset_day(self, day_key: str):
         self.current_day = day_key
         self.trades_today = 0
+        # entry_* не трогаем — это состояние позиции, не дня
 
     def touch_day(self, day_key: str):
         if self.current_day != day_key:
