@@ -4,6 +4,8 @@ broker:
   min_sandbox_cash_rub: 12000
   log_file: "logs/bot.log"
   class_code: "TQBR"
+  buy_aggressive_ticks: 1   # лимит близко к last (1 тик)
+  sell_aggressive_ticks: 1
   trades_csv: "logs/trades.csv"
 
   retry_tries: 3
@@ -63,7 +65,7 @@ runtime:
 
   # NEW: cancel/expire limit orders if not filled within TTL
   # (prevents "stuck all day" and frees slots for new signals)
-  order_ttl_sec: 300
+  order_ttl_sec: 120
 
 telegram:
   enabled: true
