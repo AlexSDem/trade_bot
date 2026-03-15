@@ -1,0 +1,73 @@
+Generated at (UTC): 2026-03-04T20:59:25.180549+00:00
+
+Daily report for 2026-03-04 (UTC)
+------------------------------------------------------------
+Events total: 273
+
+Summary:
+  signals=186 | submits=84 | fills=0 | cancel=2 | reject=0 | expire=1
+
+Order lifecycle:
+  submit_orders=84 | finalized_orders=2 | stuck_submit_without_final=82 | submit_to_final=2.4%
+  Stuck order_id (last 10):
+    - dfea7405-d3dd-486c-a9d5-2f705705194a
+    - e51930b9-fcb9-417b-8efa-a5bfd07cdffe
+    - e82aa5b6-ab37-4229-87d5-db677b30e6fd
+    - e9886312-51ef-48ce-918a-7cc35ac5a485
+    - eadf4c4f-2055-45b2-9b78-53369b018a29
+    - ecd5d309-8eaa-4f33-b7f1-e2d0dd61fb51
+    - ed5ee0b0-5207-4b82-b00f-57642f0c202c
+    - f2eadd58-4f3f-4613-82c1-34e3f3f0e0d9
+    - f4d89b86-9e9e-4598-aa49-138530e53d9b
+    - fc396be9-7765-4f27-848b-efd4daa9fa01
+
+Events:
+  SIGNAL      : 186
+  SUBMIT      : 84
+  CANCEL      : 2
+  EXPIRE      : 1
+
+No fills today.
+
+By ticker (signal/submit/fill/cancel/reject/expire):
+  ALRS      : signal= 68 submit= 10 fill=  0 cancel=  0 reject=  0 expire=  0
+  GAZP      : signal= 11 submit= 12 fill=  0 cancel=  0 reject=  0 expire=  0
+  GMKN      : signal=  8 submit= 12 fill=  0 cancel=  1 reject=  0 expire=  0
+  NVTK      : signal= 11 submit=  8 fill=  0 cancel=  1 reject=  0 expire=  1
+  ROSN      : signal= 59 submit= 18 fill=  0 cancel=  0 reject=  0 expire=  0
+  SBER      : signal= 12 submit= 10 fill=  0 cancel=  0 reject=  0 expire=  0
+  TATN      : signal= 17 submit= 14 fill=  0 cancel=  0 reject=  0 expire=  0
+
+Reject/Cancel (last 10):
+  11:05:04 CANCEL NVTK   SELL status=CANCELLED reason=ttl_expired
+  15:40:22 CANCEL GMKN   SELL status=CANCELLED reason=flatten_cancel
+
+Top reasons:
+  limit_sell_to_close                      45
+  limit_buy                                39
+  mean_reversion last<39.1589 edge_atr=5.043 2
+  mean_reversion last<39.5548 edge_atr=0.440 2
+  take_profit last>=440.9066               2
+  mean_reversion last<39.5634 edge_atr=2.571 2
+  mean_reversion last<440.1838 edge_atr=5.978 2
+  mean_reversion last<440.6850 edge_atr=4.046 2
+  mean_reversion last<39.5419 edge_atr=0.141 2
+  mean_reversion last<39.5609 edge_atr=1.466 2
+
+Last 15 events:
+  15:35:33 SUBMIT       ROSN       SELL lots=  1 price=438.3500 limit_sell_to_close
+  15:36:28 SIGNAL       ROSN       BUY  lots=  1 price=438.6000 mean_reversion last<439.6732 edge_atr=3.163
+  15:37:24 SIGNAL       ROSN       BUY  lots=  1 price=438.5000 mean_reversion last<439.6612 edge_atr=3.613
+  15:38:19 SIGNAL       ROSN       BUY  lots=  1 price=438.5000 mean_reversion last<439.6461 edge_atr=3.527
+  15:39:15 SIGNAL       ROSN       BUY  lots=  1 price=438.7500 mean_reversion last<439.6114 edge_atr=2.436
+  15:40:11 SUBMIT       GAZP       SELL lots=  1 price=128.0500 limit_sell_to_close
+  15:40:11 SUBMIT       GMKN       SELL lots=  1 price=159.9400 limit_sell_to_close
+  15:40:11 SUBMIT       ALRS       SELL lots=  1 price= 39.2200 limit_sell_to_close
+  15:40:22 CANCEL       GMKN       SELL lots=  - price=       - flatten_cancel
+  15:46:13 SUBMIT       GMKN       SELL lots=  1 price=160.1200 limit_sell_to_close
+  15:46:26 SUBMIT       GMKN       SELL lots=  1 price=160.1200 limit_sell_to_close
+  15:46:40 SUBMIT       GMKN       SELL lots=  1 price=160.1200 limit_sell_to_close
+  15:46:53 SUBMIT       GMKN       SELL lots=  1 price=160.1200 limit_sell_to_close
+  15:47:07 SUBMIT       GMKN       SELL lots=  1 price=160.1200 limit_sell_to_close
+  15:47:20 SUBMIT       GMKN       SELL lots=  1 price=160.1200 limit_sell_to_close
+

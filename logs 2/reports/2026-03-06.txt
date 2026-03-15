@@ -1,0 +1,60 @@
+Generated at (UTC): 2026-03-06T15:40:16.509538+00:00
+
+Daily report for 2026-03-06 (Europe/Moscow)
+------------------------------------------------------------
+Events total: 256
+
+Summary:
+  signals=158 | submits=50 | fills=0 | cancel=0 | reject=0 | expire=48
+
+Order lifecycle:
+  submit_orders=50 | finalized_orders=48 | stuck_submit_without_final=2 | submit_to_final=96.0%
+  Stuck order_id (last 10):
+    - 11bb1c11-31b3-4f01-8caf-f8b5d20bff17
+    - 6d7d58c6-c395-4ab2-b6c4-641b3ccb3c41
+
+Events:
+  SIGNAL      : 158
+  SUBMIT      : 50
+  EXPIRE      : 48
+
+No fills today.
+
+By ticker (signal/submit/fill/cancel/reject/expire):
+  ALRS      : signal= 10 submit= 10 fill=  0 cancel=  0 reject=  0 expire= 10
+  GAZP      : signal=  4 submit=  4 fill=  0 cancel=  0 reject=  0 expire=  4
+  GMKN      : signal= 15 submit= 16 fill=  0 cancel=  0 reject=  0 expire= 15
+  NVTK      : signal= 26 submit=  6 fill=  0 cancel=  0 reject=  0 expire=  6
+  ROSN      : signal= 48 submit=  0 fill=  0 cancel=  0 reject=  0 expire=  0
+  SBER      : signal= 49 submit=  8 fill=  0 cancel=  0 reject=  0 expire=  7
+  TATN      : signal=  6 submit=  6 fill=  0 cancel=  0 reject=  0 expire=  6
+
+Top reasons:
+  ttl_expired                              48
+  limit_buy                                25
+  limit_sell_to_close                      25
+  mean_reversion last<1346.2084 edge_atr=1.066 2
+  mean_reversion last<315.5652 edge_atr=5.465 2
+  mean_reversion last<315.5815 edge_atr=3.568 2
+  mean_reversion last<449.6761 edge_atr=1.050 2
+  mean_reversion last<315.6406 edge_atr=1.606 2
+  mean_reversion last<449.8882 edge_atr=1.968 2
+  mean_reversion last<449.7008 edge_atr=1.003 2
+
+Last 15 events:
+  15:28:15 SIGNAL       NVTK       BUY  lots=  1 price=1343.0000 mean_reversion last<1346.3964 edge_atr=1.822
+  15:29:10 SIGNAL       NVTK       BUY  lots=  1 price=1342.5000 mean_reversion last<1346.4023 edge_atr=2.109
+  15:30:06 SIGNAL       NVTK       BUY  lots=  1 price=1342.6000 mean_reversion last<1346.3123 edge_atr=1.947
+  15:31:01 SIGNAL       NVTK       BUY  lots=  1 price=1344.1000 mean_reversion last<1346.2084 edge_atr=1.066
+  15:31:57 SIGNAL       NVTK       BUY  lots=  1 price=1344.1000 mean_reversion last<1346.2084 edge_atr=1.066
+  15:32:52 SIGNAL       NVTK       BUY  lots=  1 price=1342.4000 mean_reversion last<1346.2353 edge_atr=1.989
+  15:33:47 SIGNAL       NVTK       BUY  lots=  1 price=1341.5000 mean_reversion last<1346.2093 edge_atr=2.380
+  15:34:43 SIGNAL       NVTK       BUY  lots=  1 price=1342.0000 mean_reversion last<1346.1220 edge_atr=2.004
+  15:35:38 SIGNAL       NVTK       BUY  lots=  1 price=1341.7000 mean_reversion last<1346.1973 edge_atr=2.273
+  15:36:34 SIGNAL       NVTK       BUY  lots=  1 price=1341.9000 mean_reversion last<1346.2990 edge_atr=2.333
+  15:37:29 SIGNAL       NVTK       BUY  lots=  1 price=1342.9000 mean_reversion last<1346.2165 edge_atr=1.713
+  15:38:25 SIGNAL       NVTK       BUY  lots=  1 price=1342.0000 mean_reversion last<1346.1289 edge_atr=2.087
+  15:39:20 SIGNAL       NVTK       BUY  lots=  1 price=1343.2000 mean_reversion last<1345.8835 edge_atr=1.287
+  15:40:16 SUBMIT       GMKN       SELL lots=  1 price=158.7200 limit_sell_to_close
+  15:40:16 SUBMIT       SBER       SELL lots=  1 price=314.4300 limit_sell_to_close
+

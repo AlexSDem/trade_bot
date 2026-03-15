@@ -1,0 +1,44 @@
+Generated at (UTC): 2026-03-03T15:40:33.426510+00:00
+
+Daily report for 2026-03-03 (UTC)
+------------------------------------------------------------
+Events total: 286
+
+Summary:
+  signals=208 | submits=78 | fills=0 | cancel=0 | reject=0 | expire=0
+
+Events:
+  SIGNAL      : 208
+  SUBMIT      : 78
+
+No fills today.
+
+Top reasons:
+  limit_buy                                39
+  limit_sell_to_close                      39
+  mean_reversion last<449.3222 edge_atr=0.976 2
+  mean_reversion last<450.2697 edge_atr=3.372 2
+  mean_reversion last<449.8706 edge_atr=7.096 2
+  mean_reversion last<39.4012 edge_atr=0.505 2
+  mean_reversion last<39.3961 edge_atr=2.582 2
+  mean_reversion last<449.0199 edge_atr=1.108 2
+  mean_reversion last<1284.8486 edge_atr=6.925 2
+  mean_reversion last<158.4802 edge_atr=2.925 2
+
+Last 15 events:
+  15:35:54 SIGNAL       GMKN       BUY  lots=  1 price=158.2800 mean_reversion last<158.4724 edge_atr=1.433
+  15:35:54 SIGNAL       TATN       SELL lots=  1 price=628.4000 take_profit last>=628.0020
+  15:35:54 SUBMIT       TATN       SELL lots=  1 price=628.3000 limit_sell_to_close
+  15:35:54 SIGNAL       NVTK       BUY  lots=  1 price=1272.7000 mean_reversion last<1278.1660 edge_atr=3.111
+  15:36:50 SIGNAL       GMKN       BUY  lots=  1 price=158.3400 mean_reversion last<158.4743 edge_atr=1.011
+  15:36:50 SIGNAL       NVTK       BUY  lots=  1 price=1272.7000 mean_reversion last<1278.1590 edge_atr=3.225
+  15:37:45 SIGNAL       GMKN       BUY  lots=  1 price=158.3000 mean_reversion last<158.4631 edge_atr=1.165
+  15:37:45 SIGNAL       NVTK       BUY  lots=  1 price=1272.1000 mean_reversion last<1278.1397 edge_atr=3.741
+  15:38:41 SIGNAL       GMKN       BUY  lots=  1 price=158.1000 mean_reversion last<158.4017 edge_atr=1.974
+  15:38:41 SIGNAL       NVTK       BUY  lots=  1 price=1273.1000 mean_reversion last<1278.2199 edge_atr=3.381
+  15:39:36 SIGNAL       GMKN       BUY  lots=  1 price=158.1800 mean_reversion last<158.3861 edge_atr=1.336
+  15:39:36 SIGNAL       NVTK       BUY  lots=  1 price=1273.8000 mean_reversion last<1278.1533 edge_atr=2.875
+  15:40:32 SUBMIT       SBER       SELL lots=  1 price=311.1900 limit_sell_to_close
+  15:40:32 SUBMIT       GAZP       SELL lots=  1 price=129.1200 limit_sell_to_close
+  15:40:33 SUBMIT       ALRS       SELL lots=  1 price= 39.2300 limit_sell_to_close
+

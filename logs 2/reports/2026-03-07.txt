@@ -1,0 +1,73 @@
+Generated at (UTC): 2026-03-07T15:40:00.377500+00:00
+
+Daily report for 2026-03-07 (Europe/Moscow)
+------------------------------------------------------------
+Events total: 304
+
+Summary:
+  signals=132 | submits=70 | fills=0 | cancel=34 | reject=0 | expire=68
+
+Order lifecycle:
+  submit_orders=70 | finalized_orders=68 | stuck_submit_without_final=2 | submit_to_final=97.1%
+  Stuck order_id (last 10):
+    - 20d78e15-e86e-4c4d-a106-1f25e7fdb00b
+    - 2f38e945-4fc3-47f3-b800-96125a4302ad
+
+Events:
+  SIGNAL      : 132
+  SUBMIT      : 70
+  EXPIRE      : 68
+  CANCEL      : 34
+
+No fills today.
+
+By ticker (signal/submit/fill/cancel/reject/expire):
+  ALRS      : signal= 10 submit=  8 fill=  0 cancel=  0 reject=  0 expire=  8
+  GAZP      : signal= 38 submit= 21 fill=  0 cancel= 15 reject=  0 expire= 21
+  GMKN      : signal=  7 submit=  8 fill=  0 cancel=  4 reject=  0 expire=  7
+  NVTK      : signal= 37 submit= 10 fill=  0 cancel=  4 reject=  0 expire= 10
+  ROSN      : signal= 13 submit= 12 fill=  0 cancel=  6 reject=  0 expire= 12
+  SBER      : signal=  2 submit=  3 fill=  0 cancel=  1 reject=  0 expire=  2
+  TATN      : signal= 25 submit=  8 fill=  0 cancel=  4 reject=  0 expire=  8
+
+Reject/Cancel (last 10):
+  12:36:38 CANCEL ROSN   BUY  status=CANCELLED reason=ttl_expired
+  12:58:57 CANCEL GAZP   BUY  status=CANCELLED reason=ttl_expired
+  14:00:06 CANCEL GAZP   BUY  status=CANCELLED reason=ttl_expired
+  14:02:52 CANCEL GAZP   BUY  status=CANCELLED reason=ttl_expired
+  14:05:40 CANCEL GAZP   BUY  status=CANCELLED reason=ttl_expired
+  14:08:27 CANCEL GMKN   SELL status=CANCELLED reason=ttl_expired
+  14:39:58 CANCEL GAZP   BUY  status=CANCELLED reason=ttl_expired
+  14:52:54 CANCEL NVTK   BUY  status=CANCELLED reason=ttl_expired
+  14:54:45 CANCEL GMKN   SELL status=CANCELLED reason=ttl_expired
+  15:03:04 CANCEL NVTK   BUY  status=CANCELLED reason=ttl_expired
+
+Top reasons:
+  ttl_expired                              102
+  limit_buy                                47
+  limit_sell_to_close                      23
+  mean_reversion last<1374.8936 edge_atr=0.655 2
+  mean_reversion last<656.2018 edge_atr=0.273 2
+  mean_reversion last<656.4904 edge_atr=1.324 2
+  mean_reversion last<1375.8234 edge_atr=1.098 2
+  mean_reversion last<39.2290 edge_atr=2.254 1
+  mean_reversion last<313.5323 edge_atr=0.101 1
+  mean_reversion last<158.9104 edge_atr=1.156 1
+
+Last 15 events:
+  14:54:45 CANCEL       GMKN       SELL lots=  - price=       - ttl_expired
+  15:00:17 SIGNAL       NVTK       BUY  lots=  1 price=1372.6000 mean_reversion last<1372.7520 edge_atr=0.120
+  15:00:18 SUBMIT       NVTK       BUY  lots=  1 price=1372.8000 limit_buy
+  15:03:04 EXPIRE       NVTK       BUY  lots=  - price=       - ttl_expired
+  15:03:04 CANCEL       NVTK       BUY  lots=  - price=       - ttl_expired
+  15:16:55 SIGNAL       TATN       BUY  lots=  1 price=654.6000 mean_reversion last<654.7632 edge_atr=0.714
+  15:20:37 SIGNAL       NVTK       BUY  lots=  1 price=1372.8000 mean_reversion last<1373.6018 edge_atr=1.059
+  15:21:32 SIGNAL       NVTK       BUY  lots=  1 price=1372.8000 mean_reversion last<1373.5988 edge_atr=1.055
+  15:22:27 SIGNAL       NVTK       BUY  lots=  1 price=1372.9000 mean_reversion last<1373.3771 edge_atr=0.506
+  15:23:23 SIGNAL       NVTK       BUY  lots=  1 price=1372.8000 mean_reversion last<1373.3553 edge_atr=0.584
+  15:24:18 SIGNAL       NVTK       BUY  lots=  1 price=1372.9000 mean_reversion last<1373.2090 edge_atr=0.294
+  15:25:14 SIGNAL       NVTK       BUY  lots=  1 price=1373.0000 mean_reversion last<1373.2663 edge_atr=0.266
+  15:26:09 SIGNAL       NVTK       BUY  lots=  1 price=1373.0000 mean_reversion last<1373.3049 edge_atr=0.305
+  15:40:00 SUBMIT       GMKN       SELL lots=  1 price=159.2800 limit_sell_to_close
+  15:40:00 SUBMIT       SBER       SELL lots=  1 price=314.1300 limit_sell_to_close
+

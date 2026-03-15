@@ -96,6 +96,13 @@ def main():
     order_reprice_sec = int(cfg.get("runtime", {}).get("order_reprice_sec", 90))
     instance_lock_path = cfg.get("runtime", {}).get("instance_lock_file", "logs/bot.lock")
 
+    def eod_report_ready(broker: Broker, figis: list[str]) -> bool:
+        for figi in figis:
+            fs = broker.state.get(figi)
+            if fs.active_order_id or int(fs.position_lots) > 0:
+                return False
+        return True
+
     with SingleInstanceLock(instance_lock_path), Client(token) as client:
         broker = Broker(
             client,
@@ -213,7 +220,7 @@ def main():
                     # End of day report + end portfolio
                     if broker.flatten_due(ts, cfg["schedule"]):
                         day_key = ts_local.date().isoformat()
-                        if report_sent_for_day != day_key:
+                        if report_sent_for_day != day_key and eod_report_ready(broker, figis):
                             try:
                                 df = load_trades(cfg["broker"].get("trades_csv", "logs/trades.csv"))
                                 report_day = ts_local.date()
@@ -252,7 +259,7 @@ def main():
                     broker.flatten_if_needed(account_id, cfg["schedule"])
 
                     day_key = ts_local.date().isoformat()
-                    if report_sent_for_day != day_key:
+                    if report_sent_for_day != day_key and eod_report_ready(broker, figis):
                         try:
                             df = load_trades(cfg["broker"].get("trades_csv", "logs/trades.csv"))
                             report_day = ts_local.date()

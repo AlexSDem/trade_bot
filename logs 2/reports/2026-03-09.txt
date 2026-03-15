@@ -1,0 +1,57 @@
+Generated at (UTC): 2026-03-09T15:40:01.107049+00:00
+
+Daily report for 2026-03-09 (Europe/Moscow)
+------------------------------------------------------------
+Events total: 470
+
+Summary:
+  signals=346 | submits=62 | fills=0 | cancel=0 | reject=0 | expire=62
+
+Order lifecycle:
+  submit_orders=62 | finalized_orders=62 | stuck_submit_without_final=0 | submit_to_final=100.0%
+
+Events:
+  SIGNAL      : 346
+  SUBMIT      : 62
+  EXPIRE      : 62
+
+No fills today.
+
+By ticker (signal/submit/fill/cancel/reject/expire):
+  ALRS      : signal=182 submit=  4 fill=  0 cancel=  0 reject=  0 expire=  4
+  GAZP      : signal= 31 submit= 10 fill=  0 cancel=  0 reject=  0 expire= 10
+  GMKN      : signal= 18 submit= 10 fill=  0 cancel=  0 reject=  0 expire= 10
+  NVTK      : signal= 27 submit= 10 fill=  0 cancel=  0 reject=  0 expire= 10
+  ROSN      : signal= 40 submit= 10 fill=  0 cancel=  0 reject=  0 expire= 10
+  SBER      : signal= 14 submit=  4 fill=  0 cancel=  0 reject=  0 expire=  4
+  TATN      : signal= 34 submit= 14 fill=  0 cancel=  0 reject=  0 expire= 14
+
+Top reasons:
+  ttl_expired                              62
+  limit_sell_to_close                      31
+  limit_buy                                31
+  mean_reversion last<39.2611 edge_atr=2.227 2
+  mean_reversion last<496.6011 edge_atr=2.283 2
+  mean_reversion last<1410.3142 edge_atr=6.722 2
+  mean_reversion last<134.0604 edge_atr=1.646 2
+  mean_reversion last<665.0097 edge_atr=0.528 2
+  mean_reversion last<496.4524 edge_atr=0.061 2
+  mean_reversion last<134.1203 edge_atr=0.149 2
+
+Last 15 events:
+  15:36:19 SIGNAL       TATN       BUY  lots=  1 price=660.6000 mean_reversion last<665.3408 edge_atr=4.609
+  15:36:19 SIGNAL       NVTK       BUY  lots=  1 price=1401.1000 mean_reversion last<1409.6744 edge_atr=3.271
+  15:36:19 SIGNAL       ROSN       BUY  lots=  1 price=496.5000 mean_reversion last<496.5378 edge_atr=0.058
+  15:37:14 SIGNAL       GAZP       BUY  lots=  1 price=133.8500 mean_reversion last<134.0762 edge_atr=1.852
+  15:37:15 SIGNAL       TATN       BUY  lots=  1 price=661.4000 mean_reversion last<665.5055 edge_atr=4.598
+  15:37:15 SIGNAL       NVTK       BUY  lots=  1 price=1401.8000 mean_reversion last<1409.7540 edge_atr=3.137
+  15:38:10 SIGNAL       GAZP       BUY  lots=  1 price=133.8700 mean_reversion last<134.0828 edge_atr=1.851
+  15:38:10 SIGNAL       GMKN       BUY  lots=  1 price=156.0200 mean_reversion last<156.0670 edge_atr=0.476
+  15:38:10 SIGNAL       TATN       BUY  lots=  1 price=661.3000 mean_reversion last<665.5802 edge_atr=5.078
+  15:38:10 SIGNAL       NVTK       BUY  lots=  1 price=1401.5000 mean_reversion last<1410.2905 edge_atr=4.215
+  15:38:10 SIGNAL       ROSN       BUY  lots=  1 price=496.4500 mean_reversion last<496.5396 edge_atr=0.137
+  15:39:05 SIGNAL       GAZP       BUY  lots=  1 price=133.9300 mean_reversion last<134.0822 edge_atr=1.332
+  15:39:05 SIGNAL       GMKN       BUY  lots=  1 price=156.0000 mean_reversion last<156.0671 edge_atr=0.691
+  15:39:05 SIGNAL       TATN       BUY  lots=  1 price=661.4000 mean_reversion last<665.6001 edge_atr=5.026
+  15:39:05 SIGNAL       NVTK       BUY  lots=  1 price=1403.2000 mean_reversion last<1410.2295 edge_atr=3.336
+

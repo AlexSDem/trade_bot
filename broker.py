@@ -596,6 +596,8 @@ class Broker:
     def is_trading_time(self, ts_utc: datetime, schedule_cfg: dict) -> bool:
         tz = ZoneInfo(schedule_cfg["tz"])
         ts_local = ts_utc.astimezone(tz)
+        if ts_local.weekday() >= 5:
+            return False
         start = datetime.combine(ts_local.date(), self._parse_hhmm(schedule_cfg["start_trade"]), tzinfo=tz)
         flatten = datetime.combine(ts_local.date(), self._parse_hhmm(schedule_cfg["flatten_time"]), tzinfo=tz)
         return start <= ts_local <= flatten
@@ -603,12 +605,16 @@ class Broker:
     def new_entries_allowed(self, ts_utc: datetime, schedule_cfg: dict) -> bool:
         tz = ZoneInfo(schedule_cfg["tz"])
         ts_local = ts_utc.astimezone(tz)
+        if ts_local.weekday() >= 5:
+            return False
         stop_entries = datetime.combine(ts_local.date(), self._parse_hhmm(schedule_cfg["stop_new_entries"]), tzinfo=tz)
         return ts_local <= stop_entries
 
     def flatten_due(self, ts_utc: datetime, schedule_cfg: dict) -> bool:
         tz = ZoneInfo(schedule_cfg["tz"])
         ts_local = ts_utc.astimezone(tz)
+        if ts_local.weekday() >= 5:
+            return False
         flatten = datetime.combine(ts_local.date(), self._parse_hhmm(schedule_cfg["flatten_time"]), tzinfo=tz)
         return ts_local >= flatten
 
@@ -1018,6 +1024,11 @@ class Broker:
         if side == "BUY" and snapshot_lots > 0:
             fill_lots = int(op_fill["lots"]) if op_fill else max(1, requested_lots or min(snapshot_lots, 1))
             fill_price = op_fill["price"] if op_fill else fs.entry_price
+            fill_source = op_fill["source"] if op_fill else "snapshot_only"
+            if fill_price is None:
+                fill_price = self.get_last_price(figi)
+                if fill_price is not None:
+                    fill_source = "last_price_estimate"
             fill_commission = self._calc_fixed_commission_rub(figi, fill_lots, fill_price)
             self.log(
                 f"[RECOVER] BUY fill inferred from position snapshot {self.format_instrument(figi)} "
@@ -1035,7 +1046,7 @@ class Broker:
                 reason=order_reason or "filled_after_not_found",
                 meta={
                     "recovered": True,
-                    "source": op_fill["source"] if op_fill else "snapshot_only",
+                    "source": fill_source,
                     "commission_rub": float(fill_commission),
                 },
             )
@@ -1061,6 +1072,11 @@ class Broker:
         if side == "SELL" and snapshot_lots == 0:
             fill_lots = int(op_fill["lots"]) if op_fill else max(1, requested_lots)
             fill_price = op_fill["price"] if op_fill else None
+            fill_source = op_fill["source"] if op_fill else "snapshot_only"
+            if fill_price is None:
+                fill_price = self.get_last_price(figi)
+                if fill_price is not None:
+                    fill_source = "last_price_estimate"
             fill_commission = self._calc_fixed_commission_rub(figi, fill_lots, fill_price)
             entry = fs.entry_price
             total_commission = float(fill_commission) + float(getattr(fs, "entry_commission_rub", 0.0) or 0.0)
@@ -1091,7 +1107,7 @@ class Broker:
                 reason=order_reason or "filled_after_not_found",
                 meta={
                     "recovered": True,
-                    "source": op_fill["source"] if op_fill else "snapshot_only",
+                    "source": fill_source,
                     "commission_rub": float(fill_commission),
                 },
             )
